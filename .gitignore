@@ -1,0 +1,6 @@
+# 給 AI 的 prompt 草稿，不公開
+gps_art_prompts.md
+# 原始 GPX/KML（別人的路線），只公開精簡後的 routes.js
+routes/*.gpx
+routes/*.kml
+__pycache__/
