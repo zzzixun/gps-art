@@ -4,3 +4,6 @@ gps_art_prompts.md
 routes/*.gpx
 routes/*.kml
 __pycache__/
+routes/*.jpg
+routes/*.jpeg
+routes/*.png

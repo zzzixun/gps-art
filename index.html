@@ -78,15 +78,16 @@
     </div>
 
     <section class="pane on" id="pane-draw">
-      <div class="hint">在地圖上依序點擊控制點，系統會用步行路網自動貼合街道。可先上傳一張簡筆畫當描圖紙。</div>
+      <div class="hint">在地圖上依序點擊控制點，系統會用步行路網自動貼合街道。<br><b>照片／截圖轉路線：</b>① 上傳圖片 → ② 按「兩點對齊」把照片疊到正確位置 → ③ 鎖定 → ④ 沿著照片上的線，在每個轉角點一下 → ⑤ 匯出 GPX。</div>
       <label>描圖紙圖片 (PNG / JPG / SVG)</label>
       <input type="file" id="imgfile" accept="image/*">
       <label>透明度 <small id="v-op">50%</small></label>
       <input type="range" id="op" min="0" max="100" value="50">
       <label>寬度（實際尺寸） <small id="v-sc">1500 m</small></label>
-      <input type="range" id="sc" min="200" max="6000" step="50" value="1500">
+      <input type="range" id="sc" min="200" max="10000" step="50" value="1500">
       <label>旋轉 <small id="v-rot">0°</small></label>
       <input type="range" id="rot" min="-180" max="180" value="0">
+      <div class="row"><button class="btn blue" id="align">📌 兩點對齊（點照片上的點 → 點地圖上的同一點，做兩次）</button></div>
       <div class="row">
         <button class="btn" id="lock">🔓 拖曳中（拖藍色把手）</button>
         <button class="btn" id="rmimg">移除圖片</button>
@@ -272,6 +273,7 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
 map.on('click', e => {
   if (nav.on) return;
   if (pickingStart) return setStartAt(e.latlng);
+  if (aligning) return alignClick(e.latlng);
   if (tab === 'draw') addWaypoint(e.latlng);
   if (tab === 'tpl') { tplCenter = e.latlng; drawTpl(); }
   if (tab === 'pix') { pixStart = e.latlng; drawPix(); }
@@ -316,6 +318,35 @@ $('lock').onclick = () => {
   if (ov.locked) handle.remove(); else if (ov.img) handle.addTo(map);
 };
 $('rmimg').onclick = () => { ov.layer && ov.layer.remove(); handle.remove(); Object.assign(ov, { img: null, layer: null }); $('imgfile').value = ''; };
+
+// 兩點對齊：照片上的 A、B 兩點分別對到地圖上的真實位置 → 算出縮放、旋轉、平移（相似變換）
+let aligning = false, alignPts = [];
+const alignLayer = L.layerGroup().addTo(map);
+const ALIGN_MSG = ['點照片上的第 1 個特徵點（例如某個路口）', '點地圖上「同一個」路口的真實位置', '點照片上的第 2 個特徵點（離第 1 點越遠越準）', '點地圖上第 2 點的真實位置'];
+$('align').onclick = () => {
+  if (!ov.img) return setStatus('請先上傳圖片');
+  aligning = true; alignPts = []; alignLayer.clearLayers(); setStatus(ALIGN_MSG[0]);
+};
+function alignClick(ll) {
+  alignPts.push(ll);
+  L.circleMarker(ll, { radius: 6, color: alignPts.length % 2 ? '#e8590c' : '#1c7ed6', weight: 3, fillOpacity: .3 }).addTo(alignLayer);
+  if (alignPts.length < 4) return setStatus(ALIGN_MSG[alignPts.length]);
+  aligning = false;
+  const c = ov.center, xy = p => [(p.lng - c.lng) * mLng(c.lat), (p.lat - c.lat) * M_LAT];
+  const [p1, q1, p2, q2] = alignPts.map(xy);
+  const pd = [p2[0] - p1[0], p2[1] - p1[1]], qd = [q2[0] - q1[0], q2[1] - q1[1]];
+  const s = Math.hypot(...qd) / (Math.hypot(...pd) || 1), th = Math.atan2(qd[1], qd[0]) - Math.atan2(pd[1], pd[0]);
+  // 舊中心 (0,0) 經變換後的新位置：q1 + s·R(θ)·(−p1)
+  const nx = q1[0] - s * (Math.cos(th) * p1[0] - Math.sin(th) * p1[1]), ny = q1[1] - s * (Math.sin(th) * p1[0] + Math.cos(th) * p1[1]);
+  ov.center = offset(c, nx, ny);
+  ov.widthM *= s;
+  ov.rot = ((ov.rot - th * 180 / Math.PI + 540) % 360) - 180; // 畫布旋轉是順時針為正
+  $('sc').value = ov.widthM; $('v-sc').textContent = Math.round(ov.widthM) + ' m';
+  $('rot').value = ov.rot; $('v-rot').textContent = Math.round(ov.rot) + '°';
+  renderOverlay();
+  setTimeout(() => alignLayer.clearLayers(), 1500);
+  setStatus('對齊完成！不夠準可以再對一次，或微調滑桿；滿意後按「鎖定」開始描線');
+}
 
 // ===== 階段二（改）：圖案範本 =====
 const heart = Array.from({ length: 24 }, (_, i) => {
