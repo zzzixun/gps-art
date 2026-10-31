@@ -78,6 +78,8 @@
       <button class="btn" id="clear">清除</button>
       <button class="btn pri" id="gpx">匯出 GPX</button>
     </div>
+    <label style="margin:-4px 0 4px;font-size:13px"><input type="checkbox" id="avoid"> 🚦 避開大馬路與紅綠燈（優先走巷弄、公園）</label>
+    <div class="sub" id="sigs" style="margin-bottom:10px"></div>
 
     <div class="tabs">
       <button data-tab="draw" class="on">描圖</button>
@@ -113,6 +115,8 @@
       <label>旋轉 <small id="v-trot">0°</small></label>
       <input type="range" id="trot" min="-180" max="180" value="0">
       <div class="row"><button class="btn pri" id="tplgo" disabled>沿街道生成路線</button></div>
+      <div class="row"><button class="btn blue" id="tplfind">🔍 在目前畫面裡找最像的位置</button></div>
+      <div id="tplres"></div>
     </section>
 
     <section class="pane" id="pane-pix">
@@ -132,6 +136,7 @@
 
     <section class="pane" id="pane-hot">
       <div class="hint">雙北實跑過的 GPS Art 路線，點卡片直接載入，再到「導航」分頁開跑。</div>
+      <div class="row" style="margin-bottom:8px"><button class="btn" id="hotsort">📍 依離我的距離排序</button></div>
       <div id="hotlist"></div>
       <label>匯入 GPX 檔</label>
       <input type="file" id="gpxfile" accept=".gpx,application/gpx+xml">
@@ -147,6 +152,9 @@
       <input type="range" id="spd" min="1" max="30" value="8">
       <div class="row"><button class="btn" id="navstop" disabled>■ 停止</button></div>
       <div class="hint">地圖左上工具列：📍 換起點、⇄ 反向、🧭 地圖跟著前進方向轉。跑錯或抄捷徑時，回到路線上會自動接回。</div>
+      <div class="row">
+        <button class="btn blue" id="fromme">📍 從我的位置找最近起點</button>
+      </div>
       <div class="row">
         <button class="btn" id="gmap">🗺️ Google 地圖導航到起點</button>
         <button class="btn" id="trackgpx" disabled>⬇ 匯出實際軌跡</button>
@@ -231,9 +239,139 @@ async function osrm(points) {
 // 多點一次路由（超過 50 點分批）
 async function routeMany(points) {
   const out = [];
-  for (let i = 0; i < points.length - 1; i += 49) out.push(...await osrm(points.slice(i, i + 50)));
+  for (let i = 0; i < points.length - 1; i += 49) out.push(...await legs(points.slice(i, i + 50)));
   return out;
 }
+
+// ===== 路網資料（OpenStreetMap Overpass）：「避開大馬路」與「找最像的位置」共用 =====
+const OVERPASS = 'https://overpass-api.de/api/interpreter';
+// 避開模式下每公尺的成本倍率；沒列到的道路 = 1
+const ROAD_COST = { trunk: 4, trunk_link: 4, primary: 3, primary_link: 3, secondary: 2, secondary_link: 2, tertiary: 1.3, tertiary_link: 1.3,
+  steps: 1.5, footway: .85, path: .85, pedestrian: .85, cycleway: .9, track: .9, living_street: .9 };
+const SIGNAL_COST = 80; // 每個紅綠燈約等於多走 80 m
+let net = null;
+function hpush(h, it) { h.push(it); for (let i = h.length - 1; i > 0;) { const q = (i - 1) >> 1; if (h[q][0] <= h[i][0]) break; [h[q], h[i]] = [h[i], h[q]]; i = q; } }
+function hpop(h) {
+  const top = h[0], last = h.pop();
+  if (h.length) { h[0] = last; for (let i = 0; ;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < h.length && h[l][0] < h[m][0]) m = l; if (r < h.length && h[r][0] < h[m][0]) m = r; if (m === i) break; [h[i], h[m]] = [h[m], h[i]]; i = m; } }
+  return top;
+}
+async function ensureNet(bounds) {
+  if (net && net.bounds.contains(bounds)) return net;
+  const b = bounds.extend(map.getBounds()).pad(0.1);
+  const area = b.getNorthWest().distanceTo(b.getNorthEast()) * b.getNorthWest().distanceTo(b.getSouthWest()) / 1e6;
+  if (area > 20) throw new Error(`範圍太大（${area.toFixed(0)} km²），請把地圖放大一點`);
+  setStatus('下載路網資料中…（約 5–20 秒）');
+  const bb = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
+  const q = `[out:json][timeout:60];(way["highway"~"^(trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|service|pedestrian|footway|path|steps|cycleway|track)$"]["foot"!="no"]["access"!~"^(private|no)$"](${bb});node["highway"="traffic_signals"](${bb});node["crossing"="traffic_signals"](${bb}););out body;>;out skel qt;`;
+  const res = await fetch(OVERPASS, { method: 'POST', body: 'data=' + encodeURIComponent(q) });
+  if (!res.ok) throw new Error('路網伺服器忙碌中，請稍後再試');
+  const els = (await res.json()).elements;
+  const o = b.getCenter(), kx = mLng(o.lat);
+  const xy = (lat, lng) => [(lng - o.lng) * kx, (lat - o.lat) * M_LAT];
+  const pos = new Map(), sig = new Set();
+  for (const e of els) if (e.type === 'node') { pos.set(e.id, [e.lat, e.lon]); if (e.tags && (e.tags.highway === 'traffic_signals' || e.tags.crossing === 'traffic_signals')) sig.add(e.id); }
+  const idx = new Map(), N = [], adj = [], segs = [];
+  const nid = id => {
+    let i = idx.get(id);
+    if (i === undefined) { i = N.length; idx.set(id, i); const [la, ln] = pos.get(id); N.push({ lat: la, lng: ln, xy: xy(la, ln), sig: sig.has(id) }); adj.push([]); }
+    return i;
+  };
+  for (const e of els) if (e.type === 'way') {
+    // 台北很多人行道是獨立畫的 footway，但其實就貼著大馬路 → 比照大馬路
+    const f = e.tags.footway === 'sidewalk' ? 2 : ROAD_COST[e.tags.highway] || 1;
+    for (let k = 1; k < e.nodes.length; k++) {
+      if (!pos.has(e.nodes[k - 1]) || !pos.has(e.nodes[k])) continue;
+      const a = nid(e.nodes[k - 1]), c = nid(e.nodes[k]), len = Math.hypot(N[a].xy[0] - N[c].xy[0], N[a].xy[1] - N[c].xy[1]);
+      adj[a].push([c, len, f]); adj[c].push([a, len, f]); segs.push([a, c]);
+    }
+  }
+  // 距離場：每 10 m 一格，記錄到最近道路的距離（上限 40 m），找位置時查表即可
+  const CELL = 10, CAP = 40, [x0, y0] = xy(b.getSouth(), b.getWest()), [x1, y1] = xy(b.getNorth(), b.getEast());
+  const W = Math.ceil((x1 - x0) / CELL), H = Math.ceil((y1 - y0) / CELL), field = new Float32Array(W * H).fill(CAP);
+  for (const [a, c] of segs) {
+    const [ax, ay] = N[a].xy, [cx, cy] = N[c].xy, dx = cx - ax, dy = cy - ay, L2 = dx * dx + dy * dy || 1;
+    const i0 = Math.max(0, Math.floor((Math.min(ax, cx) - CAP - x0) / CELL)), i1 = Math.min(W - 1, Math.floor((Math.max(ax, cx) + CAP - x0) / CELL));
+    const j0 = Math.max(0, Math.floor((Math.min(ay, cy) - CAP - y0) / CELL)), j1 = Math.min(H - 1, Math.floor((Math.max(ay, cy) + CAP - y0) / CELL));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const px = x0 + (i + .5) * CELL, py = y0 + (j + .5) * CELL, t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L2));
+      const d = Math.hypot(px - ax - t * dx, py - ay - t * dy), k = j * W + i;
+      if (d < field[k]) field[k] = d;
+    }
+  }
+  const roadDist = (x, y) => { const i = Math.floor((x - x0) / CELL), j = Math.floor((y - y0) / CELL); return i < 0 || j < 0 || i >= W || j >= H ? CAP : field[j * W + i]; };
+  // 節點網格，用來把控制點吸附到最近的路網節點
+  const G = 50, ng = new Map();
+  N.forEach((n, i) => { if (!adj[i].length) return; const k = Math.floor(n.xy[0] / G) + ',' + Math.floor(n.xy[1] / G); (ng.get(k) || ng.set(k, []).get(k)).push(i); });
+  const nearestNode = (x, y) => {
+    let best = -1, bd = Infinity, found = Infinity;
+    const gx = Math.floor(x / G), gy = Math.floor(y / G);
+    for (let r = 0; r <= 4 && r <= found + 1; r++) for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+      for (const i of ng.get((gx + dx) + ',' + (gy + dy)) || []) { const d = Math.hypot(N[i].xy[0] - x, N[i].xy[1] - y); if (d < bd) { bd = d; best = i; found = Math.min(found, r); } }
+    }
+    return best;
+  };
+  // 紅綠燈常標在路口旁幾公尺：15 m 內的節點都視為「在號誌路口裡」
+  const sigIdx = N.map((n, i) => n.sig ? i : -1).filter(i => i >= 0);
+  for (const i of sigIdx) {
+    const [x, y] = N[i].xy, gx = Math.floor(x / G), gy = Math.floor(y / G);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++)
+      for (const j of ng.get((gx + dx) + ',' + (gy + dy)) || []) if (Math.hypot(N[j].xy[0] - x, N[j].xy[1] - y) < 15) N[j].nearSig = true;
+  }
+  net = { bounds: b, o, kx, xy, ll: (x, y) => L.latLng(o.lat + y / M_LAT, o.lng + x / kx), N, adj, roadDist, nearestNode, sigs: sigIdx };
+  setStatus(`路網載入完成：${N.length} 個節點、${net.sigs.length} 個紅綠燈`);
+  return net;
+}
+// A*：避開模式下大馬路成本加倍、每個紅綠燈加罰
+function netRoute(a, b) {
+  const { N, adj } = net, s = net.nearestNode(...net.xy(a.lat, a.lng)), t = net.nearestNode(...net.xy(b.lat, b.lng));
+  if (s < 0 || t < 0) return null;
+  const g = new Float64Array(N.length).fill(Infinity), prev = new Int32Array(N.length).fill(-1);
+  const h = i => 0.85 * Math.hypot(N[i].xy[0] - N[t].xy[0], N[i].xy[1] - N[t].xy[1]); // 0.85 = 最低倍率，保證不高估
+  const heap = [[h(s), s]]; g[s] = 0;
+  while (heap.length) {
+    const [f, v] = hpop(heap);
+    if (v === t) break;
+    if (f - h(v) > g[v] + 1e-6) continue;
+    for (const [u, len, k] of adj[v]) {
+      const ng = g[v] + len * k + (N[u].nearSig && !N[v].nearSig ? SIGNAL_COST : 0); // 進入號誌路口才罰一次
+      if (ng < g[u]) { g[u] = ng; prev[u] = v; hpush(heap, [ng + h(u), u]); }
+    }
+  }
+  if (g[t] === Infinity) return null;
+  const path = []; for (let v = t; v >= 0; v = prev[v]) path.push(v);
+  path.reverse();
+  let dist = 0; for (let i = 1; i < path.length; i++) dist += Math.hypot(N[path[i]].xy[0] - N[path[i - 1]].xy[0], N[path[i]].xy[1] - N[path[i - 1]].xy[1]);
+  return { dist, coords: path.map(i => [N[i].lat, N[i].lng]), steps: [] };
+}
+// 依「避開大馬路」開關選擇路由方式；路網算不出來的段落退回 OSRM
+async function legs(points) {
+  if (!$('avoid').checked) return osrm(points);
+  try { await ensureNet(L.latLngBounds(points)); } catch (e) { setStatus(e.message + '，改用一般路線'); return osrm(points); }
+  const out = [];
+  for (let i = 1; i < points.length; i++) out.push(netRoute(points[i - 1], points[i]) || (await osrm([points[i - 1], points[i]]))[0]);
+  return out;
+}
+function showSignals() {
+  const c = fullCoords();
+  if (!net || c.length < 2) return $('sigs').textContent = '';
+  const P = c.map(([a, b]) => net.xy(a, b)), hit = [];
+  for (const i of net.sigs) {
+    const [x, y] = net.N[i].xy;
+    if (hit.some(([hx, hy]) => Math.hypot(hx - x, hy - y) < 40)) continue; // 同一個路口的多個號誌只算一次
+    for (let k = 1; k < P.length; k++) {
+      const [ax, ay] = P[k - 1], [bx, by] = P[k], dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L2));
+      if (Math.hypot(x - ax - t * dx, y - ay - t * dy) < 12) { hit.push([x, y]); break; }
+    }
+  }
+  $('sigs').textContent = `🚦 路線經過約 ${hit.length} 個有紅綠燈的路口`;
+}
+$('avoid').onchange = async () => {
+  if (!$('avoid').checked) return setStatus('已改回一般路線（最短距離）');
+  try { await ensureNet(map.getBounds()); setStatus('已開啟：之後生成或手畫的路線會優先走巷弄、公園，少過大路口'); showSignals(); }
+  catch (e) { setStatus(e.message); }
+};
 
 function fullCoords() {
   const c = [];
@@ -247,13 +385,14 @@ function refresh() {
   const km = segs.reduce((a, s) => a + s.dist, 0) / 1000, min = Math.round(km * PACE);
   $('dist').textContent = km.toFixed(2);
   $('time').textContent = `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}`;
+  showSignals();
 }
 
 async function addWaypoint(p) {
   if (!waypoints.length) { waypoints.push(p); return refresh(); }
   setStatus('路線計算中…');
   try {
-    const [seg] = await osrm([waypoints.at(-1), p]);
+    const [seg] = await legs([waypoints.at(-1), p]);
     waypoints.push(p); segs.push(seg); refresh(); setStatus();
   } catch (e) { setStatus('路線計算失敗：' + e.message); }
 }
@@ -294,6 +433,7 @@ map.on('click', e => {
   if (nav.on) return;
   if (aligning) return alignClick(e.latlng);
   if (mode === 'start') return setStartAt(e.latlng);
+  if (mode === 'me') { setMode(null); meMark.setLatLng(e.latlng).addTo(map); const f = pendingMe; pendingMe = null; return f && f(e.latlng); }
   if (mode === 'draw') return addWaypoint(e.latlng);
   if (tab === 'draw') return setStatus('要畫線請先按地圖左上的 ✏️');
   if (tab === 'tpl') { tplCenter = e.latlng; drawTpl(); }
@@ -439,6 +579,74 @@ bindRange('tsz', v => v + ' m', v => { tplSize = v; drawTpl(); });
 bindRange('trot', v => v + '°', v => { tplRot = v; drawTpl(); });
 $('tplgo').onclick = () => setRoute(tplPoints());
 
+// 在目前畫面裡搜尋：每個候選（位置 × 角度 × 大小）把圖案取樣，查「離最近道路多遠」的平均，越小越貼路
+const candLayer = L.layerGroup().addTo(map);
+let tplCands = [];
+$('tplfind').onclick = async () => {
+  try { await ensureNet(map.getBounds()); } catch (e) { return setStatus(e.message); }
+  setStatus('搜尋中…'); await new Promise(r => setTimeout(r, 30));
+  const t0 = performance.now(), shape = TEMPLATES[$('tplsel').value], raw = [...shape, shape[0]];
+  const sampleUnit = sp => {
+    const out = [];
+    for (let i = 1; i < raw.length; i++) {
+      const [x0, y0] = raw[i - 1], [x1, y1] = raw[i], n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / sp));
+      for (let j = 0; j < n; j++) out.push([x0 + (x1 - x0) * j / n, y0 + (y1 - y0) * j / n]);
+    }
+    return out;
+  };
+  // 旋轉方向與 place() 一致（順時針）
+  const score = (pts, cx, cy, size, rot) => {
+    const r = rot * Math.PI / 180, c = Math.cos(r), s = Math.sin(r), k = size / 2; let t = 0;
+    for (const [u, v] of pts) t += net.roadDist(cx + (u * c + v * s) * k, cy + (-u * s + v * c) * k);
+    return t / pts.length;
+  };
+  const v = map.getBounds(), [vx0, vy0] = net.xy(v.getSouth(), v.getWest()), [vx1, vy1] = net.xy(v.getNorth(), v.getEast());
+  const step = Math.max(60, tplSize / 12), cands = [];
+  for (const sc of [0.85, 1, 1.15]) {
+    const size = tplSize * sc, pts = sampleUnit(40 / (size / 2));
+    for (let cx = vx0; cx <= vx1; cx += step) for (let cy = vy0; cy <= vy1; cy += step)
+      for (let rot = -180; rot < 180; rot += 15) cands.push([score(pts, cx, cy, size, rot), cx, cy, size, rot]);
+  }
+  cands.sort((a, b) => a[0] - b[0]);
+  // 前 30 名做局部細調（位置 ±半格、角度 ±7.5°、大小 ±5%）
+  const refined = cands.slice(0, 30).map(([, cx, cy, size, rot]) => {
+    let best = null;
+    for (const ds of [0.95, 1, 1.05]) {
+      const sz = size * ds, pts = sampleUnit(15 / (sz / 2));
+      for (const dx of [-.5, -.25, 0, .25, .5]) for (const dy of [-.5, -.25, 0, .25, .5]) for (const dr of [-7.5, 0, 7.5]) {
+        const sc = score(pts, cx + dx * step, cy + dy * step, sz, rot + dr);
+        if (!best || sc < best[0]) best = [sc, cx + dx * step, cy + dy * step, sz, rot + dr];
+      }
+    }
+    return best;
+  }).sort((a, b) => a[0] - b[0]);
+  // 去掉彼此太像的結果，留前三名
+  tplCands = [];
+  for (const r of refined) {
+    if (tplCands.some(q => Math.hypot(q[1] - r[1], q[2] - r[2]) < r[3] / 3 && Math.abs(((q[4] - r[4]) + 540) % 360 - 180) < 25)) continue;
+    tplCands.push(r); if (tplCands.length === 3) break;
+  }
+  const COLORS = ['#2b8a3e', '#1c7ed6', '#ae3ec9'];
+  candLayer.clearLayers();
+  tplCands.forEach((r, i) => {
+    const pts = place(sampleUnit(0.05).map(([u, w]) => [u * r[3] / 2, w * r[3] / 2]), net.ll(r[1], r[2]), r[4]);
+    L.polyline([...pts, pts[0]], { color: COLORS[i], weight: 4, dashArray: '8 6' }).addTo(candLayer);
+  });
+  $('tplres').innerHTML = tplCands.map((r, i) => `<div class="hot ok" data-cand="${i}" style="border-left:4px solid ${COLORS[i]}"><div><b>第 ${i + 1} 名</b>` +
+    `<span>平均離道路 ${r[0].toFixed(1)} m・寬 ${Math.round(r[3])} m・轉 ${Math.round(r[4])}°</span><br><small>點這裡套用</small></div></div>`).join('');
+  if (tplCands.length) map.fitBounds(candLayer.getLayers().reduce((b, l) => b.extend(l.getBounds()), L.latLngBounds([])), { padding: [30, 30] });
+  setStatus(`比對了 ${cands.length.toLocaleString()} 種擺法（${((performance.now() - t0) / 1000).toFixed(1)} 秒），地圖上虛線是前三名`);
+};
+$('tplres').onclick = e => {
+  const el = e.target.closest('[data-cand]'); if (!el) return;
+  const r = tplCands[+el.dataset.cand];
+  tplCenter = net.ll(r[1], r[2]); tplSize = r[3]; tplRot = ((r[4] + 540) % 360) - 180;
+  $('tsz').value = tplSize; $('v-tsz').textContent = Math.round(tplSize) + ' m';
+  $('trot').value = tplRot; $('v-trot').textContent = Math.round(tplRot) + '°';
+  candLayer.clearLayers(); $('tplres').innerHTML = ''; drawTpl();
+  setStatus('已套用，按「沿街道生成路線」產生可跑的路線');
+};
+
 // ===== 熱門路線（已查證）＋ GPX 匯入 =====
 const G = id => 'https://connect.garmin.com/app/course/' + id;
 // id = routes/ 裡的檔名（不含副檔名）；跑 build_routes.py 後寫進 routes.js
@@ -484,10 +692,12 @@ function loadCoords(coords, label) {
 const links = r => Object.entries(r.links).map(([k, u]) => `<a href="${u}" target="_blank" rel="noopener">${k} ↗</a>`).join('');
 const ready = HOT.filter(r => ROUTES[r.id]).sort((a, b) => lenKm(ROUTES[a.id]) - lenKm(ROUTES[b.id]));
 const todo = HOT.filter(r => !ROUTES[r.id]);
-$('hotlist').innerHTML = ready.map(r => `<div class="hot ok" data-id="${r.id}">${thumb(ROUTES[r.id])}<div><b>${r.name}</b>` +
-  `<span>${lenKm(ROUTES[r.id]).toFixed(1)} km${r.desc ? '・' + r.desc : ''}</span><br>${links(r)}</div></div>`).join('') +
+let hotDist = null;
+const renderHot = () => $('hotlist').innerHTML = (hotDist ? [...ready].sort((a, b) => hotDist[a.id] - hotDist[b.id]) : ready).map(r => `<div class="hot ok" data-id="${r.id}">${thumb(ROUTES[r.id])}<div><b>${r.name}</b>` +
+  `<span>${lenKm(ROUTES[r.id]).toFixed(1)} km${hotDist ? '・<b style="display:inline;color:#7048e8">離你 ' + (hotDist[r.id] / 1000).toFixed(1) + ' km</b>' : ''}${r.desc ? '・' + r.desc : ''}</span><br>${links(r)}</div></div>`).join('') +
   (todo.length ? '<label>尚未取得軌跡</label>' + todo.map(r => `<div class="hot"><b>${r.name}</b><span>${r.desc}</span><br>${links(r)}</div>`).join('') : '') +
   '<div class="hint">資料來源：<a href="https://grass.camp/blog/strava-art-gps-running-route-guide-taiwan" target="_blank" rel="noopener">GRASS 台北實測路線</a>、Garmin Connect、運動筆記、Strava、Google 我的地圖。路線版權屬原作者。</div>';
+renderHot();
 $('hotlist').onclick = e => {
   if (e.target.closest('a')) return;
   const card = e.target.closest('.hot.ok'); if (!card) return;
@@ -608,6 +818,43 @@ $('optgo').onclick = () => {
   setStatus(`⚡ ${km(r.before)} km → ${km(r.after)} km，省下 ${km(r.before - r.after)} km（重複路段 ${km(r.before - r.unique)} → ${km(r.after - r.unique)} km）`);
 };
 $('optundo').onclick = () => { if (beforeOpt) { loadCoords(beforeOpt); beforeOpt = null; $('optundo').disabled = true; setStatus('已還原原本的路線'); } };
+
+// ===== 我的位置：最近起點、熱門路線依距離排序 =====
+const meMark = L.circleMarker([0, 0], { radius: 7, color: '#fff', weight: 2, fillColor: '#7048e8', fillOpacity: 1 });
+const approach = L.polyline([], { color: '#7048e8', weight: 3, dashArray: '2 6' });
+let pendingMe = null;
+const getMyPos = () => new Promise(res => {
+  if (!navigator.geolocation) return res(null);
+  navigator.geolocation.getCurrentPosition(p => res(L.latLng(p.coords.latitude, p.coords.longitude)), () => res(null), { enableHighAccuracy: true, timeout: 8000 });
+});
+async function withMyPos(fn) {
+  setStatus('取得目前位置中…');
+  const p = await getMyPos();
+  if (p) { meMark.setLatLng(p).addTo(map); return fn(p); }
+  pendingMe = fn; if (mode !== 'me') setMode('me');
+  setStatus('抓不到定位（電腦上很常見），請直接在地圖上點你的位置');
+}
+$('fromme').onclick = () => {
+  const c = fullCoords(); if (c.length < 2) return setStatus('請先載入或建立路線');
+  withMyPos(async p => {
+    let best = 0, bd = Infinity;
+    c.forEach((q, i) => { const d = p.distanceTo(q); if (d < bd) { bd = d; best = i; } });
+    if (L.latLng(c[0]).distanceTo(c.at(-1)) < 100) { const loop = c.slice(0, -1); loadCoords([...loop.slice(best), ...loop.slice(0, best + 1)]); }
+    else if (p.distanceTo(c.at(-1)) < p.distanceTo(c[0])) loadCoords([...c].reverse()); // 開放路線只能從兩端擇近
+    const start = L.latLng(fullCoords()[0]);
+    map.fitBounds(routeLine.getBounds().extend(p), { padding: [30, 30] });
+    try {
+      const [leg] = await osrm([p, start]);
+      approach.setLatLngs(leg.coords).addTo(map);
+      setStatus(`最近的起點離你 ${(leg.dist / 1000).toFixed(2)} km（走路約 ${Math.round(leg.dist / 80)} 分鐘），已設為起點（綠點），紫色虛線是過去的路`);
+    } catch (e) { setStatus(`最近的起點直線距離 ${(p.distanceTo(start) / 1000).toFixed(2)} km，已設為起點（綠點）`); }
+  });
+};
+$('hotsort').onclick = () => withMyPos(p => {
+  hotDist = {};
+  ready.forEach(r => { hotDist[r.id] = Math.min(...ROUTES[r.id].map(q => p.distanceTo(q))); });
+  renderHot(); setStatus('已依離你最近的路線點排序');
+});
 
 // ===== 自訂起點 / 反向 / Google 地圖 =====
 function setStartAt(ll) {
