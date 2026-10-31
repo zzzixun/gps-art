@@ -151,6 +151,13 @@
         <button class="btn" id="gmap">🗺️ Google 地圖導航到起點</button>
         <button class="btn" id="trackgpx" disabled>⬇ 匯出實際軌跡</button>
       </div>
+      <label>⚡ 最少重複跑法</label>
+      <div class="hint" style="margin-top:0">保留圖案的每一段線，重新排出重複路段最少的一筆畫順序。</div>
+      <label style="margin:4px 0"><input type="checkbox" id="mustret" checked> 要回到起點（取消勾選可在別處結束，通常更短）</label>
+      <div class="row">
+        <button class="btn pri" id="optgo">⚡ 計算最佳跑法</button>
+        <button class="btn" id="optundo" disabled>↶ 還原原路線</button>
+      </div>
       <div class="hint" id="turnlist" style="max-height:200px;overflow:auto"></div>
     </section>
 
@@ -471,6 +478,7 @@ function loadCoords(coords, label) {
   waypoints = [pts[0], pts.at(-1)];
   segs = [{ dist, coords: pts.map(p => [p.lat, p.lng]), steps: [] }];
   refresh(); map.fitBounds(routeLine.getBounds(), { padding: [30, 30] });
+  if (label) $('mustret').checked = pts[0].distanceTo(pts.at(-1)) < 30; // 原本是一圈就預設回到起點
   if (label) setStatus(`已載入「${label}」（${(dist / 1000).toFixed(2)} km），可到「導航」分頁開始跑`);
 }
 const links = r => Object.entries(r.links).map(([k, u]) => `<a href="${u}" target="_blank" rel="noopener">${k} ↗</a>`).join('');
@@ -485,6 +493,121 @@ $('hotlist').onclick = e => {
   const card = e.target.closest('.hot.ok'); if (!card) return;
   const r = HOT.find(r => r.id === card.dataset.id); loadCoords(ROUTES[r.id], r.name);
 };
+
+// ===== 最少重複跑法（中國郵差問題）=====
+// 1. 路線每 8 m 取樣，12 m 內的點合併成同一個節點 → 同一條街跑兩次只算一條邊
+// 2. 奇數度節點兩兩配對，沿圖內最短路徑重複那些邊（貪婪配對＋兩兩交換改良）
+// 3. Hierholzer 排出一筆畫順序，路口優先選最直的方向
+function optimizeRoute(coords, mustReturn) {
+  const o = coords[0], kx = mLng(o[0]), STEP = 8, R = 12;
+  const P = coords.map(([a, b]) => [(b - o[1]) * kx, (a - o[0]) * M_LAT]);
+  const pts = [P[0]];
+  for (let i = 1; i < P.length; i++) {
+    const [x0, y0] = P[i - 1], [x1, y1] = P[i], n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) / STEP);
+    for (let j = 1; j <= n; j++) pts.push([x0 + (x1 - x0) * j / n, y0 + (y1 - y0) * j / n]);
+  }
+  const nodes = [], grid = new Map(), seq = [], cell = (x, y) => Math.floor(x / R) + ',' + Math.floor(y / R);
+  for (const [x, y] of pts) {
+    let id = -1, bd = R;
+    const gx = Math.floor(x / R), gy = Math.floor(y / R);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++)
+      for (const k of grid.get((gx + dx) + ',' + (gy + dy)) || []) {
+        const d = Math.hypot(nodes[k].sx - x, nodes[k].sy - y); if (d < bd) { bd = d; id = k; }
+      }
+    if (id < 0) { id = nodes.length; nodes.push({ sx: x, sy: y, x: 0, y: 0, n: 0 }); const c = cell(x, y); (grid.get(c) || grid.set(c, []).get(c)).push(id); }
+    const nd = nodes[id]; nd.x += x; nd.y += y; nd.n++;
+    if (seq.at(-1) !== id) seq.push(id);
+  }
+  nodes.forEach(n => { n.x /= n.n; n.y /= n.n; });
+  const dist = (a, b) => Math.hypot(nodes[a].x - nodes[b].x, nodes[a].y - nodes[b].y);
+  const adj = nodes.map(() => new Map());
+  let before = 0;
+  for (let i = 1; i < seq.length; i++) { const a = seq[i - 1], b = seq[i], w = dist(a, b); before += w; adj[a].set(b, w); adj[b].set(a, w); }
+  // GPS 紀錄頭尾常差幾公尺：30 m 內視為原本就是一圈，直接接起來
+  const s0 = seq[0], s1 = seq.at(-1);
+  if (s0 !== s1 && dist(s0, s1) < 30) { const w = dist(s0, s1); before += w; adj[s0].set(s1, w); adj[s1].set(s0, w); }
+  let unique = 0; adj.forEach((m, a) => m.forEach((w, b) => { if (a < b) unique += w; }));
+
+  // 從每個奇數度節點跑 Dijkstra（二元堆積）
+  const odd = adj.map((m, i) => m.size % 2 ? i : -1).filter(i => i >= 0);
+  const sp = new Map();
+  for (const s of odd) {
+    const D = new Float64Array(nodes.length).fill(Infinity), prev = new Int32Array(nodes.length).fill(-1), heap = [[0, s]]; D[s] = 0;
+    while (heap.length) {
+      const [d, v] = heap[0], last = heap.pop();
+      if (heap.length) { heap[0] = last; for (let i = 0; ;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === i) break; [heap[i], heap[m]] = [heap[m], heap[i]]; i = m; } }
+      if (d > D[v]) continue;
+      for (const [u, w] of adj[v]) if (d + w < D[u]) {
+        D[u] = d + w; prev[u] = v; heap.push([D[u], u]);
+        for (let i = heap.length - 1; i > 0;) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; }
+      }
+    }
+    sp.set(s, { D, prev });
+  }
+  const cost = (a, b) => sp.get(a).D[b];
+  // 最小權重配對：貪婪起手，再兩兩交換改良到不能更好
+  function match(list) {
+    const pairs = [], free = new Set(list);
+    list.flatMap((a, i) => list.slice(i + 1).map(b => [cost(a, b), a, b])).sort((p, q) => p[0] - q[0])
+      .forEach(([, a, b]) => { if (free.has(a) && free.has(b)) { free.delete(a); free.delete(b); pairs.push([a, b]); } });
+    for (let better = true; better;) {
+      better = false;
+      for (let i = 0; i < pairs.length; i++) for (let j = i + 1; j < pairs.length; j++) {
+        const [a, b] = pairs[i], [c, d] = pairs[j], now = cost(a, b) + cost(c, d);
+        if (cost(a, c) + cost(b, d) < now - 1e-6) { pairs[i] = [a, c]; pairs[j] = [b, d]; better = true; }
+        else if (cost(a, d) + cost(b, c) < now - 1e-6) { pairs[i] = [a, d]; pairs[j] = [b, c]; better = true; }
+      }
+    }
+    return { pairs, total: pairs.reduce((t, p) => t + cost(...p), 0) };
+  }
+  let { pairs } = match(odd), ends = null;
+  // 可以在別處結束：每一對奇數點都試著當起終點，剩下的再配對，取總和最小
+  if (!mustReturn && odd.length) {
+    let bestTotal = Infinity;
+    odd.forEach((u, i) => odd.slice(i + 1).forEach(v => {
+      const m = match(odd.filter(x => x !== u && x !== v));
+      if (m.total < bestTotal) { bestTotal = m.total; pairs = m.pairs; ends = [u, v]; }
+    }));
+  }
+  // 多重圖：原本的邊＋配對路徑上重複的邊
+  const E = [], inc = nodes.map(() => []);
+  const addE = (a, b) => { inc[a].push(E.length); inc[b].push(E.length); E.push([a, b]); };
+  adj.forEach((m, a) => m.forEach((w, b) => { if (a < b) addE(a, b); }));
+  let extra = 0;
+  for (const [a, b] of pairs) { extra += cost(a, b); for (let v = b, prev = sp.get(a).prev; v !== a; v = prev[v]) addE(prev[v], v); }
+  // Hierholzer；路口挑轉角最小的邊
+  let start = seq[0];
+  if (ends) start = dist(ends[0], seq[0]) <= dist(ends[1], seq[0]) ? ends[0] : ends[1];
+  const used = new Uint8Array(E.length), stack = [start], path = [];
+  while (stack.length) {
+    const v = stack.at(-1), from = stack.length > 1 ? stack.at(-2) : -1;
+    let best = -1, bestTurn = Infinity;
+    for (const e of inc[v]) if (!used[e]) {
+      if (from < 0) { best = e; break; }
+      const u = E[e][0] === v ? E[e][1] : E[e][0];
+      const h1 = Math.atan2(nodes[v].y - nodes[from].y, nodes[v].x - nodes[from].x), h2 = Math.atan2(nodes[u].y - nodes[v].y, nodes[u].x - nodes[v].x);
+      const turn = Math.abs(((h2 - h1) * 180 / Math.PI + 540) % 360 - 180);
+      if (turn < bestTurn) { bestTurn = turn; best = e; }
+    }
+    if (best < 0) path.push(stack.pop());
+    else { used[best] = 1; stack.push(E[best][0] === v ? E[best][1] : E[best][0]); }
+  }
+  path.reverse();
+  return {
+    coords: path.map(i => [o[0] + nodes[i].y / M_LAT, o[1] + nodes[i].x / kx]),
+    before, after: unique + extra, unique, odd: odd.length
+  };
+}
+let beforeOpt = null;
+$('optgo').onclick = () => {
+  const c = fullCoords(); if (c.length < 2) return setStatus('請先載入或建立路線');
+  const r = optimizeRoute(c, $('mustret').checked), km = m => (m / 1000).toFixed(2);
+  if (r.after > r.before + 30 && $('mustret').checked) return setStatus(`要回到起點得多跑回頭路（${km(r.after)} km，比原本 ${km(r.before)} km 長），取消勾選「要回到起點」試試`);
+  if (r.after > r.before - 30) return setStatus(`這條路線的跑法已經接近最佳（目前 ${km(r.before)} km，最佳 ${km(r.after)} km），不用改`);
+  beforeOpt = c; loadCoords(r.coords); $('optundo').disabled = false;
+  setStatus(`⚡ ${km(r.before)} km → ${km(r.after)} km，省下 ${km(r.before - r.after)} km（重複路段 ${km(r.before - r.unique)} → ${km(r.after - r.unique)} km）`);
+};
+$('optundo').onclick = () => { if (beforeOpt) { loadCoords(beforeOpt); beforeOpt = null; $('optundo').disabled = true; setStatus('已還原原本的路線'); } };
 
 // ===== 自訂起點 / 反向 / Google 地圖 =====
 function setStartAt(ll) {
