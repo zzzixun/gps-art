@@ -41,6 +41,11 @@
   .hot svg { flex: none; width: 52px; height: 52px; background: #f8f9fa; border-radius: 6px; }
   .hot a { color: var(--c2); font-size: 12px; margin-right: 8px; }
   #status { font-size: 12px; color: var(--c2); min-height: 16px; margin-top: 8px; }
+  .tools { display: flex; flex-direction: column; gap: 6px; }
+  .tools button { width: 44px; height: 44px; border: 0; border-radius: 10px; background: #fff; box-shadow: 0 1px 5px rgba(0,0,0,.3); font-size: 20px; cursor: pointer; position: relative; }
+  .tools button.on { background: var(--c); box-shadow: 0 0 0 3px rgba(232,89,12,.35); }
+  .tools button span { position: absolute; left: 50px; top: 50%; transform: translateY(-50%); background: rgba(33,37,41,.85); color: #fff; font-size: 12px; padding: 2px 6px; border-radius: 4px; white-space: nowrap; pointer-events: none; display: none; }
+  .tools button:hover span, .tools button.on span { display: block; }
   #navcard { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1000; background: #212529; color: #fff; border-radius: 12px; padding: 12px 20px; min-width: 260px; text-align: center; display: none; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
   #navcard .big { font-size: 28px; font-weight: 700; }
   #navcard .small { font-size: 13px; opacity: .8; margin-top: 2px; }
@@ -50,7 +55,12 @@
   @media (max-width: 720px) {
     #app { flex-direction: column-reverse; }
     #side { width: 100%; max-height: 46vh; border-right: 0; border-top: 1px solid var(--line); }
-    #navcard { min-width: 0; width: calc(100% - 32px); }
+    .tools { display: flex; flex-direction: column; gap: 6px; }
+  .tools button { width: 44px; height: 44px; border: 0; border-radius: 10px; background: #fff; box-shadow: 0 1px 5px rgba(0,0,0,.3); font-size: 20px; cursor: pointer; position: relative; }
+  .tools button.on { background: var(--c); box-shadow: 0 0 0 3px rgba(232,89,12,.35); }
+  .tools button span { position: absolute; left: 50px; top: 50%; transform: translateY(-50%); background: rgba(33,37,41,.85); color: #fff; font-size: 12px; padding: 2px 6px; border-radius: 4px; white-space: nowrap; pointer-events: none; display: none; }
+  .tools button:hover span, .tools button.on span { display: block; }
+  #navcard { min-width: 0; width: calc(100% - 32px); }
   }
 </style>
 </head>
@@ -78,7 +88,7 @@
     </div>
 
     <section class="pane on" id="pane-draw">
-      <div class="hint">在地圖上依序點擊控制點，系統會用步行路網自動貼合街道。<br><b>照片／截圖轉路線：</b>① 上傳圖片 → ② 按「兩點對齊」把照片疊到正確位置 → ③ 鎖定 → ④ 沿著照片上的線，在每個轉角點一下 → ⑤ 匯出 GPX。</div>
+      <div class="hint">在地圖上依序點擊控制點，系統會用步行路網自動貼合街道。<br>按地圖左上的 <b>✏️</b> 開始畫，再按一次停止。<br><b>照片／截圖轉路線：</b>① 上傳圖片 → ② 按「兩點對齊」 → ③ 鎖定 → ④ 開 ✏️ 沿著線在每個轉角點一下 → ⑤ 匯出 GPX。</div>
       <label>描圖紙圖片 (PNG / JPG / SVG)</label>
       <input type="file" id="imgfile" accept="image/*">
       <label>透明度 <small id="v-op">50%</small></label>
@@ -87,8 +97,8 @@
       <input type="range" id="sc" min="200" max="10000" step="50" value="1500">
       <label>旋轉 <small id="v-rot">0°</small></label>
       <input type="range" id="rot" min="-180" max="180" value="0">
-      <div class="row"><button class="btn blue" id="align">📌 兩點對齊（點照片上的點 → 點地圖上的同一點，做兩次）</button></div>
       <div class="row">
+        <button class="btn" id="align" disabled>📌 兩點對齊</button>
         <button class="btn" id="lock">🔓 拖曳中（拖藍色把手）</button>
         <button class="btn" id="rmimg">移除圖片</button>
       </div>
@@ -136,12 +146,11 @@
       <label>模擬速度 <small id="v-spd">8×</small></label>
       <input type="range" id="spd" min="1" max="30" value="8">
       <div class="row"><button class="btn" id="navstop" disabled>■ 停止</button></div>
-      <label>起點與方向</label>
+      <div class="hint">地圖左上工具列：📍 換起點、⇄ 反向、🧭 地圖跟著前進方向轉。跑錯或抄捷徑時，回到路線上會自動接回。</div>
       <div class="row">
-        <button class="btn" id="pickstart">📍 自訂起點</button>
-        <button class="btn" id="reverse">⇄ 反向跑</button>
+        <button class="btn" id="gmap">🗺️ Google 地圖導航到起點</button>
+        <button class="btn" id="trackgpx" disabled>⬇ 匯出實際軌跡</button>
       </div>
-      <div class="row"><button class="btn" id="gmap">🧭 用 Google 地圖導航到起點</button></div>
       <div class="hint" id="turnlist" style="max-height:200px;overflow:auto"></div>
     </section>
 
@@ -152,6 +161,7 @@
 <div id="navcard"><div class="big" id="nc-big"></div><div class="small" id="nc-small"></div></div>
 
 <script src="vendor/leaflet/leaflet.js"></script>
+<script src="vendor/leaflet/leaflet-rotate.js"></script>
 <script src="routes.js"></script>
 <script>
 if (!window.L) document.getElementById('map').innerHTML = '<p style="padding:24px;color:#c92a2a">⚠ 地圖套件沒有載入：請確認 vendor/leaflet 資料夾和 index.html 放在一起。</p>';
@@ -161,7 +171,7 @@ const PACE = 6; // 分/公里
 const $ = id => document.getElementById(id);
 const setStatus = t => $('status').textContent = t || '';
 
-const map = L.map('map', { zoomControl: false }).setView([25.0330, 121.5354], 15);
+const map = L.map('map', { zoomControl: false, rotate: true, touchRotate: false, rotateControl: false, bearing: 0 }).setView([25.0330, 121.5354], 15);
 L.control.zoom({ position: 'topright' }).addTo(map);
 // 圖磚來源：前一個載不到（被擋、需要 key）就自動換下一個
 const TILES = [
@@ -251,14 +261,17 @@ async function setRoute(points) {
 
 $('undo').onclick = () => { waypoints.pop(); segs.pop(); refresh(); };
 $('clear').onclick = () => { waypoints = []; segs = []; refresh(); };
+function downloadGPX(c, name) {
+  const pts = c.map(([a, b]) => `<trkpt lat="${a.toFixed(6)}" lon="${b.toFixed(6)}"></trkpt>`).join('\n');
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="GPS Art Studio" xmlns="http://www.topografix.com/GPX/1/1">\n<trk><name>${name}</name><trkseg>\n${pts}\n</trkseg></trk>\n</gpx>`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([gpx], { type: 'application/gpx+xml' }));
+  a.download = `${name}-${Date.now()}.gpx`; a.click();
+}
 $('gpx').onclick = () => {
   const c = fullCoords();
   if (c.length < 2) return setStatus('還沒有路線可以匯出');
-  const pts = c.map(([a, b]) => `<trkpt lat="${a.toFixed(6)}" lon="${b.toFixed(6)}"></trkpt>`).join('\n');
-  const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="GPS Art Studio" xmlns="http://www.topografix.com/GPX/1/1">\n<trk><name>GPS Art</name><trkseg>\n${pts}\n</trkseg></trk>\n</gpx>`;
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([gpx], { type: 'application/gpx+xml' }));
-  a.download = `gps-art-${Date.now()}.gpx`; a.click();
+  downloadGPX(c, 'gps-art');
 };
 
 // ===== 分頁 & 地圖點擊 =====
@@ -272,12 +285,42 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
 });
 map.on('click', e => {
   if (nav.on) return;
-  if (pickingStart) return setStartAt(e.latlng);
   if (aligning) return alignClick(e.latlng);
-  if (tab === 'draw') addWaypoint(e.latlng);
+  if (mode === 'start') return setStartAt(e.latlng);
+  if (mode === 'draw') return addWaypoint(e.latlng);
+  if (tab === 'draw') return setStatus('要畫線請先按地圖左上的 ✏️');
   if (tab === 'tpl') { tplCenter = e.latlng; drawTpl(); }
   if (tab === 'pix') { pixStart = e.latlng; drawPix(); }
 });
+// ===== 地圖工具列：明確的模式開關，避免誤觸 =====
+let mode = null, headingUp = false;
+const Tools = L.Control.extend({
+  onAdd() {
+    const d = L.DomUtil.create('div', 'tools');
+    d.innerHTML = '<button id="t-draw">✏️<span>畫線（點地圖加點）</span></button><button id="t-start">📍<span>點路線換起點</span></button>' +
+      '<button id="t-rev">⇄<span>反向跑</span></button><button id="t-head">🧭<span>地圖跟著前進方向轉</span></button>';
+    L.DomEvent.disableClickPropagation(d);
+    return d;
+  }
+});
+new Tools({ position: 'topleft' }).addTo(map);
+function setMode(m) {
+  mode = mode === m ? null : m;
+  $('t-draw').classList.toggle('on', mode === 'draw');
+  $('t-start').classList.toggle('on', mode === 'start');
+  map.getContainer().style.cursor = mode ? 'crosshair' : '';
+}
+$('t-draw').onclick = () => { aligning = false; setMode('draw'); setStatus(mode ? '畫線中：在地圖上點控制點，再按一次 ✏️ 停止' : '已停止畫線'); };
+$('t-start').onclick = () => {
+  if (fullCoords().length < 2) return setStatus('請先載入或建立路線');
+  setMode('start'); setStatus(mode ? '點地圖上路線的任一處，設為新起點' : '');
+};
+$('t-rev').onclick = () => reverseRoute();
+$('t-head').onclick = () => {
+  headingUp = !headingUp; $('t-head').classList.toggle('on', headingUp);
+  if (!headingUp) map.setBearing(0);
+  setStatus(headingUp ? '導航時地圖會跟著前進方向旋轉（前方朝上）' : '地圖恢復北方朝上');
+};
 const bindRange = (id, fmt, fn) => { const el = $(id); el.oninput = () => { $('v-' + id).textContent = fmt(+el.value); fn(+el.value); }; };
 
 // ===== 階段一：描圖紙 =====
@@ -304,7 +347,7 @@ $('imgfile').onchange = e => {
   const img = new Image();
   img.onload = () => {
     if (!img.width) { img.width = 600; img.height = 600; } // 無尺寸的 SVG
-    ov.img = img; ov.center = map.getCenter(); renderOverlay();
+    ov.img = img; ov.center = map.getCenter(); renderOverlay(); $('align').disabled = false;
     if (!ov.locked) handle.addTo(map);
   };
   img.src = URL.createObjectURL(f);
@@ -317,21 +360,22 @@ $('lock').onclick = () => {
   $('lock').textContent = ov.locked ? '🔒 已鎖定' : '🔓 拖曳中（拖藍色把手）';
   if (ov.locked) handle.remove(); else if (ov.img) handle.addTo(map);
 };
-$('rmimg').onclick = () => { ov.layer && ov.layer.remove(); handle.remove(); Object.assign(ov, { img: null, layer: null }); $('imgfile').value = ''; };
+$('rmimg').onclick = () => { ov.layer && ov.layer.remove(); handle.remove(); Object.assign(ov, { img: null, layer: null }); $('imgfile').value = ''; $('align').disabled = true; };
 
 // 兩點對齊：照片上的 A、B 兩點分別對到地圖上的真實位置 → 算出縮放、旋轉、平移（相似變換）
 let aligning = false, alignPts = [];
 const alignLayer = L.layerGroup().addTo(map);
 const ALIGN_MSG = ['點照片上的第 1 個特徵點（例如某個路口）', '點地圖上「同一個」路口的真實位置', '點照片上的第 2 個特徵點（離第 1 點越遠越準）', '點地圖上第 2 點的真實位置'];
 $('align').onclick = () => {
-  if (!ov.img) return setStatus('請先上傳圖片');
+  if (aligning) { aligning = false; alignLayer.clearLayers(); $('align').classList.remove('pri'); return setStatus('已取消對齊'); }
+  setMode(null); $('align').classList.add('pri');
   aligning = true; alignPts = []; alignLayer.clearLayers(); setStatus(ALIGN_MSG[0]);
 };
 function alignClick(ll) {
   alignPts.push(ll);
   L.circleMarker(ll, { radius: 6, color: alignPts.length % 2 ? '#e8590c' : '#1c7ed6', weight: 3, fillOpacity: .3 }).addTo(alignLayer);
   if (alignPts.length < 4) return setStatus(ALIGN_MSG[alignPts.length]);
-  aligning = false;
+  aligning = false; $('align').classList.remove('pri');
   const c = ov.center, xy = p => [(p.lng - c.lng) * mLng(c.lat), (p.lat - c.lat) * M_LAT];
   const [p1, q1, p2, q2] = alignPts.map(xy);
   const pd = [p2[0] - p1[0], p2[1] - p1[1]], qd = [q2[0] - q1[0], q2[1] - q1[1]];
@@ -443,13 +487,8 @@ $('hotlist').onclick = e => {
 };
 
 // ===== 自訂起點 / 反向 / Google 地圖 =====
-let pickingStart = false;
-$('pickstart').onclick = () => {
-  if (fullCoords().length < 2) return setStatus('請先載入或建立路線');
-  pickingStart = true; setStatus('點地圖上路線的任一處，設為新起點');
-};
 function setStartAt(ll) {
-  pickingStart = false;
+  setMode(null);
   const c = fullCoords();
   let best = 0, bd = Infinity;
   c.forEach((p, i) => { const d = ll.distanceTo(p); if (d < bd) { bd = d; best = i; } });
@@ -463,10 +502,10 @@ function setStartAt(ll) {
     setStatus('這條路線頭尾不相連，只能從兩端出發，已設為離你點的位置較近的那一端');
   }
 }
-$('reverse').onclick = () => {
+function reverseRoute() {
   const c = fullCoords(); if (c.length < 2) return setStatus('請先載入或建立路線');
   loadCoords([...c].reverse()); setStatus('已反向，起點是綠點');
-};
+}
 $('gmap').onclick = () => {
   const c = fullCoords(); if (c.length < 2) return setStatus('請先載入或建立路線');
   window.open(`https://www.google.com/maps/dir/?api=1&destination=${c[0][0]},${c[0][1]}&travelmode=walking`, '_blank');
@@ -654,8 +693,8 @@ function card(big, small, warn) {
   $('nc-big').textContent = big; $('nc-small').textContent = small;
 }
 // 把 GPS 投影到路線上；只在目前進度附近搜尋，避免 GPS Art 路線交疊時跳段
-function project(p) {
-  const P = toXY([p.lat, p.lng]), lo = nav.progress - 30, hi = nav.progress + 150;
+function project(p, lo = nav.progress - 30, hi = nav.progress + 150) {
+  const P = toXY([p.lat, p.lng]);
   let best = { d: Infinity, at: nav.progress };
   for (let i = 0; i < nav.xy.length - 1; i++) {
     if (nav.cum[i + 1] < lo || nav.cum[i] > hi) continue;
@@ -666,9 +705,26 @@ function project(p) {
   }
   return best;
 }
+const doneLine = L.polyline([], { color: '#868e96', weight: 6, opacity: .9 });
+const trackLine = L.polyline([], { color: '#1c7ed6', weight: 3, dashArray: '4 6' });
+// 方位角（北 = 0，順時針）
+const bearing = (a, b) => (Math.atan2((b[1] - a[1]) * Math.cos(a[0] * Math.PI / 180), b[0] - a[0]) * 180 / Math.PI + 360) % 360;
+function turnMap(deg) {
+  if (!headingUp || deg == null) return;
+  // leaflet-rotate 的 bearing 是地圖順時針轉的角度，要讓前進方向朝上得轉 −deg
+  const cur = map.getBearing(), diff = ((360 - deg - cur + 540) % 360) - 180;
+  if (Math.abs(diff) > 4) map.setBearing(cur + diff * 0.6); // 平滑一點，避免 GPS 抖動讓地圖亂轉
+}
 function update(ll, at, off) {
   me.setLatLng(ll).addTo(map); map.panTo(ll, { animate: false });
   nav.progress = Math.max(nav.progress, at);
+  // 已跑過的路段變灰
+  const c = fullCoords(), k = nav.cum.findIndex(x => x > nav.progress);
+  doneLine.setLatLngs([...c.slice(0, k < 0 ? c.length : k), pointAt(nav.progress)]).addTo(map);
+  // 前進方向：在路線上用路線方向（穩定），偏離時用 GPS 移動方向
+  if (off <= 40) turnMap(bearing(pointAt(nav.progress), pointAt(nav.progress + 25)));
+  else if (nav.lastFix && nav.lastFix.distanceTo(ll) > 8) turnMap(bearing([nav.lastFix.lat, nav.lastFix.lng], [ll.lat, ll.lng]));
+  if (!nav.lastFix || nav.lastFix.distanceTo(ll) > 8) nav.lastFix = ll;
   const total = nav.cum.at(-1), done = `已跑 ${(nav.progress / 1000).toFixed(2)} / ${(total / 1000).toFixed(2)} km`;
   if (off > 40) {
     card(`⚠ 偏離路線 ${Math.round(off)} m`, done, true);
@@ -690,7 +746,8 @@ function update(ll, at, off) {
 }
 async function startNav(sim) {
   if (!buildNav()) return setStatus('請先建立路線');
-  nav.on = true; nav.progress = 0; nav.turns.forEach(t => t.said = t.pre = false);
+  nav.on = true; nav.progress = 0; nav.lastFix = null; nav.turns.forEach(t => t.said = t.pre = false);
+  setMode(null); doneLine.setLatLngs([]); trackLine.setLatLngs([]).addTo(map); $('trackgpx').disabled = true;
   try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {} // 必須在按鈕點擊時建立
   ['navgo', 'simgo'].forEach(id => $(id).disabled = true); $('navstop').disabled = false;
   speak(sim ? '開始模擬試跑' : '開始導航'); // 使用者點擊觸發，順便解鎖 iOS 語音
@@ -707,7 +764,13 @@ async function startNav(sim) {
   } else {
     if (!navigator.geolocation) return setStatus('此瀏覽器不支援定位');
     nav.watch = navigator.geolocation.watchPosition(pos => {
-      const ll = L.latLng(pos.coords.latitude, pos.coords.longitude), pr = project(ll);
+      const ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
+      trackLine.addLatLng(ll);
+      let pr = project(ll);
+      if (pr.d > 40) { // 不在預期路段：看看是不是抄捷徑接到後面的路線了
+        const far = project(ll, nav.progress + 150, Infinity);
+        if (far.d < 25) { speak(`已接回路線，跳過 ${Math.round((far.at - nav.progress) / 100) / 10} 公里`); nav.turns.forEach(t => { if (t.at < far.at) t.said = t.pre = true; }); pr = far; }
+      }
       update(ll, pr.d < 40 ? pr.at : nav.progress, pr.d);
     }, e => setStatus('定位失敗：' + e.message + '（需 HTTPS 並允許定位權限）'), { enableHighAccuracy: true, maximumAge: 1000 });
   }
@@ -718,12 +781,15 @@ function stopNav() {
   if (nav.watch !== null) navigator.geolocation.clearWatch(nav.watch); nav.watch = null;
   nav.lock && nav.lock.release(); nav.lock = null;
   ['navgo', 'simgo'].forEach(id => $(id).disabled = false); $('navstop').disabled = true;
+  $('trackgpx').disabled = trackLine.getLatLngs().length < 2;
+  map.setBearing(0);
   setTimeout(() => { if (!nav.on) $('navcard').style.display = 'none'; }, 4000);
 }
 document.addEventListener('visibilitychange', async () => {
   if (nav.on && document.visibilityState === 'visible') try { nav.lock = await navigator.wakeLock?.request('screen'); } catch (e) {}
 });
 $('navgo').onclick = () => startNav(false);
+$('trackgpx').onclick = () => downloadGPX(trackLine.getLatLngs().map(p => [p.lat, p.lng]), 'my-run');
 $('simgo').onclick = () => startNav(true);
 $('navstop').onclick = () => { speechSynthesis.cancel(); stopNav(); };
 bindRange('spd', v => v + '×', () => {});
