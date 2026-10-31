@@ -51,6 +51,7 @@
   #navcard .small { font-size: 13px; opacity: .8; margin-top: 2px; }
   #navcard.warn { background: #c92a2a; }
   .tiles { filter: saturate(.35) brightness(1.05); }
+  .km { background: #fff; border: 2px solid var(--c); color: var(--c); border-radius: 50%; font: 700 11px/16px system-ui; text-align: center; }
   .handle { background: var(--c2); color: #fff; border-radius: 50%; text-align: center; line-height: 26px; font-size: 16px; box-shadow: 0 0 0 3px rgba(28,126,214,.3); cursor: move; }
   @media (max-width: 720px) {
     #app { flex-direction: column-reverse; }
@@ -223,6 +224,7 @@ function place(pts, center, rotDeg) {
 let waypoints = [], segs = []; // segs[i]: {coords, dist, steps} 連接 waypoints[i] -> [i+1]
 const wpLayer = L.layerGroup().addTo(map);
 const routeLine = L.polyline([], { color: '#e8590c', weight: 5, opacity: .85 }).addTo(map);
+const kmLayer = L.layerGroup().addTo(map);
 const previewLine = L.polyline([], { color: '#495057', weight: 2, dashArray: '6 6' }).addTo(map);
 
 async function osrm(points) {
@@ -382,6 +384,18 @@ function refresh() {
   wpLayer.clearLayers();
   waypoints.forEach((p, i) => L.circleMarker(p, { radius: i ? 4 : 6, color: i ? '#495057' : '#2b8a3e', fillOpacity: 1, weight: 2 }).addTo(wpLayer));
   routeLine.setLatLngs(fullCoords());
+  // 每公里放一個號碼，看得出跑的先後順序
+  kmLayer.clearLayers();
+  const c = fullCoords();
+  for (let i = 1, acc = 0, next = 1000; i < c.length; i++) {
+    const a = L.latLng(c[i - 1]), d = a.distanceTo(c[i]);
+    while (acc + d >= next) {
+      const f = (next - acc) / d, p = [c[i - 1][0] + (c[i][0] - c[i - 1][0]) * f, c[i - 1][1] + (c[i][1] - c[i - 1][1]) * f];
+      L.marker(p, { interactive: false, icon: L.divIcon({ className: 'km', html: next / 1000, iconSize: [20, 20] }) }).addTo(kmLayer);
+      next += 1000;
+    }
+    acc += d;
+  }
   const km = segs.reduce((a, s) => a + s.dist, 0) / 1000, min = Math.round(km * PACE);
   $('dist').textContent = km.toFixed(2);
   $('time').textContent = `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}`;
@@ -686,6 +700,7 @@ function loadCoords(coords, label) {
   waypoints = [pts[0], pts.at(-1)];
   segs = [{ dist, coords: pts.map(p => [p.lat, p.lng]), steps: [] }];
   refresh(); map.fitBounds(routeLine.getBounds(), { padding: [30, 30] });
+  if (tab === 'nav' && !nav.on) buildNav(); // 轉彎清單跟著新路線更新
   if (label) $('mustret').checked = pts[0].distanceTo(pts.at(-1)) < 30; // 原本是一圈就預設回到起點
   if (label) setStatus(`已載入「${label}」（${(dist / 1000).toFixed(2)} km），可到「導航」分頁開始跑`);
 }
@@ -814,8 +829,10 @@ $('optgo').onclick = () => {
   const r = optimizeRoute(c, $('mustret').checked), km = m => (m / 1000).toFixed(2);
   if (r.after > r.before + 30 && $('mustret').checked) return setStatus(`要回到起點得多跑回頭路（${km(r.after)} km，比原本 ${km(r.before)} km 長），取消勾選「要回到起點」試試`);
   if (r.after > r.before - 30) return setStatus(`這條路線的跑法已經接近最佳（目前 ${km(r.before)} km，最佳 ${km(r.after)} km），不用改`);
+  const realBefore = segs.reduce((a, sg) => a + sg.dist, 0); // 用畫面上顯示的距離，數字才對得起來
   beforeOpt = c; loadCoords(r.coords); $('optundo').disabled = false;
-  setStatus(`⚡ ${km(r.before)} km → ${km(r.after)} km，省下 ${km(r.before - r.after)} km（重複路段 ${km(r.before - r.unique)} → ${km(r.after - r.unique)} km）`);
+  const realAfter = segs[0].dist;
+  setStatus(`⚡ ${km(realBefore)} km → ${km(realAfter)} km，省下 ${km(realBefore - realAfter)} km（重複跑的路段 ${km(r.before - r.unique)} → ${km(r.after - r.unique)} km）。圖案不變，跑的順序不同，看路線上的公里數字`);
 };
 $('optundo').onclick = () => { if (beforeOpt) { loadCoords(beforeOpt); beforeOpt = null; $('optundo').disabled = true; setStatus('已還原原本的路線'); } };
 
