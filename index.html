@@ -51,6 +51,8 @@
   #navcard .small { font-size: 13px; opacity: .8; margin-top: 2px; }
   #navcard.warn { background: #c92a2a; }
   .tiles { filter: saturate(.35) brightness(1.05); }
+  .hdl { background: #fff; border: 3px solid #7048e8; border-radius: 50%; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+  .hdl.end { border-color: #2b8a3e; }
   .km { background: #fff; border: 2px solid var(--c); color: var(--c); border-radius: 50%; font: 700 11px/16px system-ui; text-align: center; }
   .handle { background: var(--c2); color: #fff; border-radius: 50%; text-align: center; line-height: 26px; font-size: 16px; box-shadow: 0 0 0 3px rgba(28,126,214,.3); cursor: move; }
   @media (max-width: 720px) {
@@ -448,6 +450,7 @@ map.on('click', e => {
   if (aligning) return alignClick(e.latlng);
   if (mode === 'start') return setStartAt(e.latlng);
   if (mode === 'me') { setMode(null); meMark.setLatLng(e.latlng).addTo(map); const f = pendingMe; pendingMe = null; return f && f(e.latlng); }
+  if (mode === 'edit') return editClick(e.latlng);
   if (mode === 'draw') return addWaypoint(e.latlng);
   if (tab === 'draw') return setStatus('要畫線請先按地圖左上的 ✏️');
   if (tab === 'tpl') { tplCenter = e.latlng; drawTpl(); }
@@ -459,6 +462,7 @@ const Tools = L.Control.extend({
   onAdd() {
     const d = L.DomUtil.create('div', 'tools');
     d.innerHTML = '<button id="t-draw">✏️<span>畫線（點地圖加點）</span></button><button id="t-start">📍<span>點路線換起點</span></button>' +
+      '<button id="t-edit">✋<span>調整路線（拖曳紫點）</span></button><button id="t-eundo" style="display:none">↶<span>復原上一步調整</span></button>' +
       '<button id="t-rev">⇄<span>反向跑</span></button><button id="t-head">🧭<span>地圖跟著前進方向轉</span></button>';
     L.DomEvent.disableClickPropagation(d);
     return d;
@@ -469,7 +473,10 @@ function setMode(m) {
   mode = mode === m ? null : m;
   $('t-draw').classList.toggle('on', mode === 'draw');
   $('t-start').classList.toggle('on', mode === 'start');
-  map.getContainer().style.cursor = mode ? 'crosshair' : '';
+  $('t-edit').classList.toggle('on', mode === 'edit');
+  $('t-eundo').style.display = mode === 'edit' ? '' : 'none';
+  map.getContainer().style.cursor = mode && mode !== 'edit' ? 'crosshair' : '';
+  drawHandles();
 }
 $('t-draw').onclick = () => { aligning = false; setMode('draw'); setStatus(mode ? '畫線中：在地圖上點控制點，再按一次 ✏️ 停止' : '已停止畫線'); };
 $('t-start').onclick = () => {
@@ -477,6 +484,103 @@ $('t-start').onclick = () => {
   setMode('start'); setStatus(mode ? '點地圖上路線的任一處，設為新起點' : '');
 };
 $('t-rev').onclick = () => reverseRoute();
+
+// ===== 調整路線：把路線切成控制點，拖曳任一點只重算它前後兩段 =====
+const editLayer = L.layerGroup().addTo(map);
+let editHist = [];
+const segLen = c => { let d = 0; for (let i = 1; i < c.length; i++) d += L.latLng(c[i - 1]).distanceTo(c[i]); return d; };
+const isLoop = () => waypoints.length > 2 && waypoints[0].distanceTo(waypoints.at(-1)) < 30;
+function splitForEdit() { // 載入的路線只有頭尾兩點 → 依轉角切成多個控制點，路線本身不變
+  if (segs.length !== 1 || segs[0].coords.length < 3) return;
+  const c = segs[0].coords, o = c[0], xy = c.map(q => [(q[1] - o[1]) * 111320 * Math.cos(o[0] * Math.PI / 180), (q[0] - o[0]) * 110540]);
+  const k = simplify(xy, 12);
+  waypoints = k.map(i => L.latLng(c[i]));
+  segs = k.slice(1).map((b, j) => { const cs = c.slice(k[j], b + 1); return { coords: cs, dist: segLen(cs), steps: [] }; });
+}
+function drawHandles() {
+  editLayer.clearLayers();
+  if (mode !== 'edit') return;
+  const n = waypoints.length, loop = isLoop();
+  waypoints.forEach((p, i) => {
+    if (loop && i === n - 1) return; // 一圈的終點和起點是同一個把手
+    const end = i === 0 || i === n - 1, sz = end ? 18 : 14;
+    const m = L.marker(p, { draggable: true, autoPan: true, icon: L.divIcon({ className: 'hdl' + (end ? ' end' : ''), iconSize: [sz, sz] }) }).addTo(editLayer);
+    m.on('dragend', () => moveHandle(i, m.getLatLng()));
+    m.on('click', () => {
+      if (n <= 2) return;
+      const b = L.DomUtil.create('button', 'btn'); b.textContent = '🗑 刪除這個點';
+      b.onclick = () => { map.closePopup(); removeHandle(i); };
+      m.bindPopup(b).openPopup();
+    });
+  });
+}
+function snapshot() { editHist.push({ w: [...waypoints], s: segs.map(x => ({ ...x })) }); if (editHist.length > 30) editHist.shift(); }
+function afterEdit(msg) {
+  refresh(); drawHandles();
+  if (tab === 'nav' && !nav.on) buildNav();
+  setStatus(msg);
+}
+async function moveHandle(i, p) {
+  const n = waypoints.length, loop = isLoop();
+  const idx = loop && i === 0 ? [0, n - 1] : [i]; // 一圈時起終點一起移動
+  setStatus('重新計算這一段…');
+  try {
+    const jobs = [];
+    for (const j of idx) {
+      if (j > 0) jobs.push([j - 1, waypoints[j - 1], p]);
+      if (j < n - 1) jobs.push([j, p, waypoints[j + 1]]);
+    }
+    const out = await Promise.all(jobs.map(([, a, b]) => legs([a, b]).then(r => r[0])));
+    snapshot();
+    idx.forEach(j => waypoints[j] = p);
+    jobs.forEach(([k], t) => segs[k] = out[t]);
+    afterEdit('已調整，按 ↶ 可復原；點橘線可加新的點');
+  } catch (e) { drawHandles(); setStatus('路線計算失敗：' + e.message); }
+}
+async function removeHandle(i) {
+  const n = waypoints.length;
+  if (i === 0 || i === n - 1) { // 刪頭尾：直接去掉那一段
+    snapshot();
+    if (i === 0) { waypoints.shift(); segs.shift(); } else { waypoints.pop(); segs.pop(); }
+    return afterEdit('已刪除端點');
+  }
+  setStatus('重新計算這一段…');
+  try {
+    const [seg] = await legs([waypoints[i - 1], waypoints[i + 1]]);
+    snapshot(); waypoints.splice(i, 1); segs.splice(i - 1, 2, seg);
+    afterEdit('已刪除，前後兩點改成直接相連');
+  } catch (e) { setStatus('路線計算失敗：' + e.message); }
+}
+function editClick(ll) { // 點在橘線上 → 在那裡切出一個新控制點（路線不變，之後可拖曳）
+  const P = map.latLngToContainerPoint(ll);
+  let best = { d: 20 };
+  segs.forEach((sg, si) => sg.coords.forEach((q, k) => {
+    if (!k) return;
+    const A = map.latLngToContainerPoint(sg.coords[k - 1]), B = map.latLngToContainerPoint(q);
+    const dx = B.x - A.x, dy = B.y - A.y, t = Math.max(0, Math.min(1, ((P.x - A.x) * dx + (P.y - A.y) * dy) / (dx * dx + dy * dy || 1)));
+    const d = Math.hypot(P.x - A.x - t * dx, P.y - A.y - t * dy);
+    if (d < best.d) best = { d, si, k, t };
+  }));
+  if (best.si == null) return setStatus('拖曳紫點調整；要加點請點在橘色路線上');
+  const c = segs[best.si].coords, a = c[best.k - 1], b = c[best.k];
+  const p = [a[0] + (b[0] - a[0]) * best.t, a[1] + (b[1] - a[1]) * best.t];
+  const c1 = [...c.slice(0, best.k), p], c2 = [p, ...c.slice(best.k)];
+  snapshot();
+  waypoints.splice(best.si + 1, 0, L.latLng(p));
+  segs.splice(best.si, 1, { coords: c1, dist: segLen(c1), steps: [] }, { coords: c2, dist: segLen(c2), steps: [] });
+  afterEdit('已加一個點，拖曳它來調整路線');
+}
+$('t-edit').onclick = () => {
+  if (fullCoords().length < 2) return setStatus('請先載入或建立路線');
+  aligning = false;
+  if (mode !== 'edit') { splitForEdit(); editHist = []; refresh(); }
+  setMode('edit');
+  setStatus(mode ? '調整中：拖曳紫點改位置（只重算前後兩段）、點橘線加點、點紫點可刪除；再按 ✋ 結束' : '已結束調整');
+};
+$('t-eundo').onclick = () => {
+  const h = editHist.pop(); if (!h) return setStatus('沒有可以復原的調整');
+  waypoints = h.w; segs = h.s; afterEdit('已復原');
+};
 $('t-head').onclick = () => {
   headingUp = !headingUp; $('t-head').classList.toggle('on', headingUp);
   if (!headingUp) map.setBearing(0);
@@ -679,6 +783,7 @@ const HOT = [
   { id: '迅猛龍', name: '迅猛龍', desc: '松山、東區、八德路', links: {} },
   { id: '安森大野狼', name: '大安大野狼', desc: '大安森林公園、永康街一帶', links: {} },
   { id: '安森玫瑰花', name: '大安森林公園玫瑰花', desc: '大安森林公園步道', links: {} },
+  { id: '羊咩咩', name: '羊咩咩', desc: '', links: {} },
   { id: 'Chihuahua', name: '城市吉娃娃', desc: '東區、松菸到小巨蛋', links: { 'Google 地圖': 'https://www.google.com/maps/d/viewer?mid=1qp1w4jwob4reGoDgKXSQ3TjCaRqkz7c' } },
   { id: 'songshan-dino', name: '松山區恐龍', desc: '松山區', links: { Garmin: G(248803) } },
 ];
