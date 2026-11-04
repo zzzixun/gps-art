@@ -46,10 +46,10 @@
   .tools button.on { background: var(--c); box-shadow: 0 0 0 3px rgba(232,89,12,.35); }
   .tools button span { position: absolute; left: 50px; top: 50%; transform: translateY(-50%); background: rgba(33,37,41,.85); color: #fff; font-size: 12px; padding: 2px 6px; border-radius: 4px; white-space: nowrap; pointer-events: none; display: none; }
   .tools button:hover span, .tools button.on span { display: block; }
-  #navcard { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1000; background: #212529; color: #fff; border-radius: 12px; padding: 12px 20px; min-width: 260px; text-align: center; display: none; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
-  #navcard .big { font-size: 28px; font-weight: 700; }
-  #navcard .small { font-size: 13px; opacity: .8; margin-top: 2px; }
-  #navcard.warn { background: #c92a2a; }
+  #navcard { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 1000; background: rgba(33,37,41,.8); color: #fff; border-radius: 10px; padding: 6px 14px; min-width: 220px; text-align: center; display: none; box-shadow: 0 2px 8px rgba(0,0,0,.25); pointer-events: none; }
+  #navcard .big { font-size: 20px; font-weight: 700; }
+  #navcard .small { font-size: 12px; opacity: .8; }
+  #navcard.warn { background: rgba(201,42,42,.85); }
   .tiles { filter: saturate(.35) brightness(1.05); }
   .hdl { background: #fff; border: 3px solid #7048e8; border-radius: 50%; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
   .hdl.end { border-color: #2b8a3e; }
@@ -58,19 +58,21 @@
   @media (max-width: 720px) {
     #app { flex-direction: column-reverse; }
     #side { width: 100%; max-height: 46vh; border-right: 0; border-top: 1px solid var(--line); }
-    .tools { display: flex; flex-direction: column; gap: 6px; }
-  .tools button { width: 44px; height: 44px; border: 0; border-radius: 10px; background: #fff; box-shadow: 0 1px 5px rgba(0,0,0,.3); font-size: 20px; cursor: pointer; position: relative; }
-  .tools button.on { background: var(--c); box-shadow: 0 0 0 3px rgba(232,89,12,.35); }
-  .tools button span { position: absolute; left: 50px; top: 50%; transform: translateY(-50%); background: rgba(33,37,41,.85); color: #fff; font-size: 12px; padding: 2px 6px; border-radius: 4px; white-space: nowrap; pointer-events: none; display: none; }
-  .tools button:hover span, .tools button.on span { display: block; }
-  #navcard { min-width: 0; width: calc(100% - 32px); }
+    #navcard { min-width: 0; width: calc(100% - 24px); }
   }
+  body.fold #side { display: none; }
+  .fab { display: flex; gap: 6px; }
+  .fab button { height: 44px; padding: 0 14px; border: 0; border-radius: 22px; background: #fff; box-shadow: 0 1px 5px rgba(0,0,0,.3); font-size: 15px; cursor: pointer; }
+  .fab button.stop { background: #c92a2a; color: #fff; }
+  .fab button.me { background: var(--c2); color: #fff; }
+  #compass { width: 44px; height: 44px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 5px rgba(0,0,0,.3); cursor: pointer; font: 700 11px system-ui; color: #c92a2a; display: none; }
+  #compass i { display: block; font-style: normal; line-height: 1; }
 </style>
 </head>
 <body>
 <div id="app">
   <aside id="side">
-    <h1>🏃 雙北 GPS Art Studio</h1>
+    <h1>🏃 雙北 GPS Art Studio <button class="btn" id="foldbtn" style="float:right;flex:none;padding:2px 8px;font-size:12px">▾ 收起</button></h1>
     <div class="sub">描圖・範本・像素圖 → 沿真實街道生成跑步路線 → 語音導航</div>
     <div class="stats">
       <div class="stat"><b id="dist">0.00</b><span>總距離 km</span></div>
@@ -154,7 +156,7 @@
       <label>模擬速度 <small id="v-spd">8×</small></label>
       <input type="range" id="spd" min="1" max="30" value="8">
       <div class="row"><button class="btn" id="navstop" disabled>■ 停止</button></div>
-      <div class="hint">地圖左上工具列：📍 換起點、⇄ 反向、🧭 地圖跟著前進方向轉。跑錯或抄捷徑時，回到路線上會自動接回。</div>
+      <div class="hint">開始後面板會自動收起，按右下 ☰ 可再打開。地圖左上：📍 換起點、⇄ 反向、🧭 前方朝上。跑步中可拖曳、縮放、雙指旋轉地圖看前面的路，按 ◎（或 15 秒沒動）就回到目前位置。電腦上用 Shift＋滾輪旋轉。跑錯或抄捷徑時，回到路線上會自動接回。</div>
       <div class="row">
         <button class="btn blue" id="fromme">📍 從我的位置找最近起點</button>
       </div>
@@ -189,7 +191,7 @@ const PACE = 6; // 分/公里
 const $ = id => document.getElementById(id);
 const setStatus = t => $('status').textContent = t || '';
 
-const map = L.map('map', { zoomControl: false, rotate: true, touchRotate: false, rotateControl: false, bearing: 0 }).setView([25.0330, 121.5354], 15);
+const map = L.map('map', { zoomControl: false, rotate: true, touchRotate: true, rotateControl: false, bearing: 0 }).setView([25.0330, 121.5354], 15);
 L.control.zoom({ position: 'topright' }).addTo(map);
 // 圖磚來源：前一個載不到（被擋、需要 key）就自動換下一個
 const TILES = [
@@ -485,6 +487,54 @@ $('t-start').onclick = () => {
 };
 $('t-rev').onclick = () => reverseRoute();
 
+// ===== 指北針、收起面板、跑步中的浮動按鈕 =====
+let selfRot = false;
+function rotTo(b) { selfRot = true; map.setBearing(b); selfRot = false; }
+const Compass = L.Control.extend({ onAdd() { const b = L.DomUtil.create('button'); b.id = 'compass'; b.title = '點一下恢復北方朝上'; b.innerHTML = '<i>▲</i>N'; L.DomEvent.disableClickPropagation(b); return b; } });
+new Compass({ position: 'topright' }).addTo(map);
+$('compass').onclick = () => { headingUp = false; $('t-head').classList.remove('on'); rotTo(0); };
+map.on('rotate', () => {
+  const b = map.getBearing() % 360;
+  $('compass').style.display = Math.abs(b) > 1 && Math.abs(b - 360) > 1 ? 'block' : 'none';
+  $('compass').style.transform = `rotate(${b}deg)`;
+  if (!selfRot) pauseFollow(); // 使用者自己轉了地圖
+});
+const Fab = L.Control.extend({
+  onAdd() {
+    const d = L.DomUtil.create('div', 'fab');
+    d.innerHTML = '<button id="f-me" class="me" style="display:none">◎ 回到目前位置</button><button id="f-stop" class="stop" style="display:none">■ 停止</button><button id="f-fold" style="display:none">☰ 面板</button>';
+    L.DomEvent.disableClickPropagation(d);
+    return d;
+  }
+});
+new Fab({ position: 'bottomright' }).addTo(map);
+function setFold(on) {
+  document.body.classList.toggle('fold', on);
+  map.invalidateSize({ animate: false }); showFab();
+}
+function showFab() {
+  const folded = document.body.classList.contains('fold');
+  $('f-fold').style.display = folded ? '' : 'none';
+  $('f-stop').style.display = nav.on && folded ? '' : 'none';
+  $('f-me').style.display = nav.on && !nav.follow ? '' : 'none';
+}
+$('foldbtn').onclick = () => setFold(true);
+$('f-fold').onclick = () => setFold(false);
+$('f-stop').onclick = () => $('navstop').click();
+$('f-me').onclick = () => { nav.follow = true; showFab(); if (me._map) followMe(me.getLatLng()); };
+function pauseFollow() {
+  if (!nav.on) return;
+  nav.follow = false; nav.pauseAt = Date.now(); showFab();
+}
+map.on('dragstart', pauseFollow);
+map.on('dragend', () => nav.pauseAt = Date.now());
+// 把自己放在畫面下方約 2/3 處，前方的路線看得比較多，也不會被上面的提示框擋住
+function followMe(ll) {
+  map.panTo(ll, { animate: false });
+  const s = map.getSize();
+  map.panTo(map.containerPointToLatLng([s.x / 2, s.y * 0.32]), { animate: false });
+}
+
 // ===== 調整路線：把路線切成控制點，拖曳任一點只重算它前後兩段 =====
 const editLayer = L.layerGroup().addTo(map);
 let editHist = [];
@@ -583,7 +633,7 @@ $('t-eundo').onclick = () => {
 };
 $('t-head').onclick = () => {
   headingUp = !headingUp; $('t-head').classList.toggle('on', headingUp);
-  if (!headingUp) map.setBearing(0);
+  if (!headingUp) rotTo(0);
   setStatus(headingUp ? '導航時地圖會跟著前進方向旋轉（前方朝上）' : '地圖恢復北方朝上');
 };
 const bindRange = (id, fmt, fn) => { const el = $(id); el.oninput = () => { $('v-' + id).textContent = fmt(+el.value); fn(+el.value); }; };
@@ -1117,7 +1167,13 @@ function buildNav() {
     if (prev && at - prev.at < 12) { prev.deg += deg; continue; } // 合併過近的轉彎
     nav.turns.push({ at, deg, ll: L.latLng(c[k[j]]) });
   }
-  nav.turns = nav.turns.filter(t => Math.abs(t.deg) > 30).map(t => {
+  const T = nav.turns.filter(t => Math.abs(t.deg) > 30), kept = [];
+  for (let i = 0; i < T.length; i++) {
+    const a = T[i], b = T[i + 1];
+    if (b && b.at - a.at < 40 && Math.sign(a.deg) !== Math.sign(b.deg) && Math.abs(a.deg + b.deg) < 35 && Math.abs(a.deg) < 135 && Math.abs(b.deg) < 135) { i++; continue; }
+    kept.push(a);
+  }
+  nav.turns = kept.map(t => {
     const st = steps.find(s => s.name && s.at.distanceTo(t.ll) < 25), base = turnText(t.deg);
     const turn = { ...t, base, said: false, pre: false };
     setTurnName(turn, st && st.name);
@@ -1204,16 +1260,19 @@ function turnMap(deg) {
   if (!headingUp || deg == null) return;
   // leaflet-rotate 的 bearing 是地圖順時針轉的角度，要讓前進方向朝上得轉 −deg
   const cur = map.getBearing(), diff = ((360 - deg - cur + 540) % 360) - 180;
-  if (Math.abs(diff) > 4) map.setBearing(cur + diff * 0.6); // 平滑一點，避免 GPS 抖動讓地圖亂轉
+  if (Math.abs(diff) > 4) rotTo(cur + diff * 0.6); // 平滑一點，避免 GPS 抖動讓地圖亂轉
 }
 function update(ll, at, off) {
-  me.setLatLng(ll).addTo(map); map.panTo(ll, { animate: false });
+  me.setLatLng(ll).addTo(map);
+  if (!nav.follow && Date.now() - nav.pauseAt > 15000) { nav.follow = true; showFab(); } // 15 秒沒動地圖就自動回來
+  if (nav.follow) followMe(ll);
   nav.progress = Math.max(nav.progress, at);
   // 已跑過的路段變灰
   const c = fullCoords(), k = nav.cum.findIndex(x => x > nav.progress);
   doneLine.setLatLngs([...c.slice(0, k < 0 ? c.length : k), pointAt(nav.progress)]).addTo(map);
   // 前進方向：在路線上用路線方向（穩定），偏離時用 GPS 移動方向
-  if (off <= 40) turnMap(bearing(pointAt(nav.progress), pointAt(nav.progress + 25)));
+  if (!nav.follow) {} // 使用者正在看地圖，不要自動轉
+  else if (off <= 40) turnMap(bearing(pointAt(nav.progress), pointAt(nav.progress + 25)));
   else if (nav.lastFix && nav.lastFix.distanceTo(ll) > 8) turnMap(bearing([nav.lastFix.lat, nav.lastFix.lng], [ll.lat, ll.lng]));
   if (!nav.lastFix || nav.lastFix.distanceTo(ll) > 8) nav.lastFix = ll;
   const total = nav.cum.at(-1), done = `已跑 ${(nav.progress / 1000).toFixed(2)} / ${(total / 1000).toFixed(2)} km`;
@@ -1238,6 +1297,7 @@ function update(ll, at, off) {
 async function startNav(sim) {
   if (!buildNav()) return setStatus('請先建立路線');
   nav.on = true; nav.progress = 0; nav.lastFix = null; nav.turns.forEach(t => t.said = t.pre = false);
+  nav.follow = true; setFold(true);
   setMode(null); doneLine.setLatLngs([]); trackLine.setLatLngs([]).addTo(map); $('trackgpx').disabled = true;
   try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {} // 必須在按鈕點擊時建立
   ['navgo', 'simgo'].forEach(id => $(id).disabled = true); $('navstop').disabled = false;
@@ -1273,7 +1333,7 @@ function stopNav() {
   nav.lock && nav.lock.release(); nav.lock = null;
   ['navgo', 'simgo'].forEach(id => $(id).disabled = false); $('navstop').disabled = true;
   $('trackgpx').disabled = trackLine.getLatLngs().length < 2;
-  map.setBearing(0);
+  rotTo(0); setFold(false); showFab();
   setTimeout(() => { if (!nav.on) $('navcard').style.display = 'none'; }, 4000);
 }
 document.addEventListener('visibilitychange', async () => {
