@@ -61,6 +61,8 @@
     #navcard { min-width: 0; width: calc(100% - 24px); }
   }
   body.fold #side { display: none; }
+  body.navon .leaflet-top { top: 64px; } /* 讓出上方提示框的位置 */
+  body.navon .tools span { display: none; }
   .fab { display: flex; gap: 6px; }
   .fab button { height: 44px; padding: 0 14px; border: 0; border-radius: 22px; background: #fff; box-shadow: 0 1px 5px rgba(0,0,0,.3); font-size: 15px; cursor: pointer; }
   .fab button.stop { background: #c92a2a; color: #fff; }
@@ -1324,7 +1326,7 @@ function update(ll, at, off) {
 async function startNav(sim) {
   if (!buildNav()) return setStatus('請先建立路線');
   nav.on = true; nav.progress = 0; nav.lastFix = null; nav.turns.forEach(t => t.said = t.pre = false);
-  nav.follow = true; setFold(true); locOff(); // 導航有自己的定位點
+  nav.follow = true; document.body.classList.add('navon'); setFold(true); locOff(); // 導航有自己的定位點
   setMode(null); doneLine.setLatLngs([]); trackLine.setLatLngs([]).addTo(map); $('trackgpx').disabled = true;
   try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {} // 必須在按鈕點擊時建立
   ['navgo', 'simgo'].forEach(id => $(id).disabled = true); $('navstop').disabled = false;
@@ -1360,7 +1362,7 @@ function stopNav() {
   nav.lock && nav.lock.release(); nav.lock = null;
   ['navgo', 'simgo'].forEach(id => $(id).disabled = false); $('navstop').disabled = true;
   $('trackgpx').disabled = trackLine.getLatLngs().length < 2;
-  rotTo(0); setFold(false); showFab();
+  rotTo(0); document.body.classList.remove('navon'); setFold(false); showFab();
   setTimeout(() => { if (!nav.on) $('navcard').style.display = 'none'; }, 4000);
 }
 document.addEventListener('visibilitychange', async () => {
