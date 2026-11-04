@@ -465,7 +465,7 @@ const Tools = L.Control.extend({
     const d = L.DomUtil.create('div', 'tools');
     d.innerHTML = '<button id="t-draw">✏️<span>畫線（點地圖加點）</span></button><button id="t-start">📍<span>點路線換起點</span></button>' +
       '<button id="t-edit">✋<span>調整路線（拖曳紫點）</span></button><button id="t-eundo" style="display:none">↶<span>復原上一步調整</span></button>' +
-      '<button id="t-rev">⇄<span>反向跑</span></button><button id="t-head">🧭<span>地圖跟著前進方向轉</span></button>';
+      '<button id="t-rev">⇄<span>反向跑</span></button><button id="t-head">🧭<span>地圖跟著前進方向轉</span></button><button id="t-loc">◎<span>顯示我的位置</span></button>';
     L.DomEvent.disableClickPropagation(d);
     return d;
   }
@@ -527,6 +527,33 @@ function pauseFollow() {
   nav.follow = false; nav.pauseAt = Date.now(); showFab();
 }
 map.on('dragstart', pauseFollow);
+
+// ===== 沒在導航時看自己的位置：按一次開始追蹤並置中，拖曳地圖後再按會回到自己，置中時再按就關閉 =====
+const loc = { watch: null, follow: false, dot: L.circleMarker([0, 0], { radius: 8, color: '#fff', weight: 3, fillColor: '#1c7ed6', fillOpacity: 1, interactive: false }),
+  acc: L.circle([0, 0], { radius: 1, color: '#1c7ed6', weight: 1, fillOpacity: .12, interactive: false }), first: true };
+function locOff() {
+  if (loc.watch !== null) navigator.geolocation.clearWatch(loc.watch);
+  loc.watch = null; loc.dot.remove(); loc.acc.remove(); $('t-loc').classList.remove('on');
+}
+$('t-loc').onclick = () => {
+  if (nav.on) return setStatus('導航中已經在顯示你的位置了');
+  if (loc.watch !== null) {
+    if (!loc.follow && loc.dot._map) { loc.follow = true; return map.panTo(loc.dot.getLatLng()); }
+    locOff(); return setStatus('已關閉我的位置');
+  }
+  if (!navigator.geolocation) return setStatus('此瀏覽器不支援定位');
+  loc.first = true; loc.follow = true; $('t-loc').classList.add('on'); setStatus('取得目前位置中…（手機需 HTTPS 並允許定位）');
+  loc.watch = navigator.geolocation.watchPosition(pos => {
+    const ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
+    loc.dot.setLatLng(ll).addTo(map); loc.acc.setLatLng(ll).setRadius(pos.coords.accuracy).addTo(map);
+    if (loc.first) {
+      loc.first = false; map.setView(ll, Math.max(map.getZoom(), 16));
+      const c = fullCoords();
+      setStatus(c.length > 1 ? `你在這裡（誤差約 ${Math.round(pos.coords.accuracy)} m），離路線起點 ${(ll.distanceTo(c[0]) / 1000).toFixed(2)} km` : `你在這裡（誤差約 ${Math.round(pos.coords.accuracy)} m）`);
+    } else if (loc.follow) map.panTo(ll);
+  }, e => { locOff(); setStatus('定位失敗：' + e.message + '（需 HTTPS 並允許定位權限）'); }, { enableHighAccuracy: true, maximumAge: 2000 });
+};
+map.on('dragstart', () => loc.follow = false);
 map.on('dragend', () => nav.pauseAt = Date.now());
 // 把自己放在畫面下方約 2/3 處，前方的路線看得比較多，也不會被上面的提示框擋住
 function followMe(ll) {
@@ -1297,7 +1324,7 @@ function update(ll, at, off) {
 async function startNav(sim) {
   if (!buildNav()) return setStatus('請先建立路線');
   nav.on = true; nav.progress = 0; nav.lastFix = null; nav.turns.forEach(t => t.said = t.pre = false);
-  nav.follow = true; setFold(true);
+  nav.follow = true; setFold(true); locOff(); // 導航有自己的定位點
   setMode(null); doneLine.setLatLngs([]); trackLine.setLatLngs([]).addTo(map); $('trackgpx').disabled = true;
   try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {} // 必須在按鈕點擊時建立
   ['navgo', 'simgo'].forEach(id => $(id).disabled = true); $('navstop').disabled = false;
