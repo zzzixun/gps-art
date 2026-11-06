@@ -1187,6 +1187,9 @@ function buildNav() {
   org = c[0];
   nav.xy = c.map(toXY); nav.cum = [0];
   for (let i = 1; i < c.length; i++) nav.cum.push(nav.cum[i - 1] + Math.hypot(nav.xy[i][0] - nav.xy[i - 1][0], nav.xy[i][1] - nav.xy[i - 1][1]));
+  // 每 5 m 取一個樣本點，記錄「真的跑過」哪些地方
+  nav.samp = [];
+  for (let d = 0, tot = nav.cum.at(-1); d <= tot; d += SAMP) { const q = pointAt(d); nav.samp.push({ at: d, xy: toXY(q), ll: q, done: false }); }
   const k = simplify(nav.xy, 8), steps = segs.flatMap(s => s.steps);
   for (let j = 1; j < k.length - 1; j++) {
     const [a, b, d] = [nav.xy[k[j - 1]], nav.xy[k[j]], nav.xy[k[j + 1]]];
@@ -1282,6 +1285,20 @@ function project(p, lo = nav.progress - 30, hi = nav.progress + 150) {
   return best;
 }
 const doneLine = L.polyline([], { color: '#868e96', weight: 6, opacity: .9 });
+const SAMP = 5;
+// 只把 GPS 實際經過（15 m 內）的路段變灰；跳過、繞路沒跑到的地方維持橘色，一眼看得出漏了哪裡
+function markRun(ll) {
+  const P = toXY([ll.lat, ll.lng]); let changed = false;
+  for (const q of nav.samp) {
+    if (q.done || q.at < nav.progress - 200 || q.at > nav.progress + 400) continue; // 只看目前進度附近，避免經過交叉的別段路線也被算進去
+    if (Math.hypot(q.xy[0] - P[0], q.xy[1] - P[1]) < 15) { q.done = true; changed = true; }
+  }
+  if (!changed) return;
+  const runs = []; let cur = null;
+  for (const q of nav.samp) if (q.done) { if (!cur) runs.push(cur = []); cur.push(q.ll); } else cur = null;
+  doneLine.setLatLngs(runs).addTo(map);
+  nav.ran = nav.samp.filter(q => q.done).length * SAMP;
+}
 const trackLine = L.polyline([], { color: '#1c7ed6', weight: 3, dashArray: '4 6' });
 // 方位角（北 = 0，順時針）
 const bearing = (a, b) => (Math.atan2((b[1] - a[1]) * Math.cos(a[0] * Math.PI / 180), b[0] - a[0]) * 180 / Math.PI + 360) % 360;
@@ -1289,22 +1306,21 @@ function turnMap(deg) {
   if (!headingUp || deg == null) return;
   // leaflet-rotate 的 bearing 是地圖順時針轉的角度，要讓前進方向朝上得轉 −deg
   const cur = map.getBearing(), diff = ((360 - deg - cur + 540) % 360) - 180;
-  if (Math.abs(diff) > 4) rotTo(cur + diff * 0.6); // 平滑一點，避免 GPS 抖動讓地圖亂轉
+  if (Math.abs(diff) > 30) rotTo(cur + diff); // 轉彎：一次轉到新方向
+  else if (Math.abs(diff) > 4) rotTo(cur + diff * 0.6); // 平滑一點，避免 GPS 抖動讓地圖亂轉
 }
 function update(ll, at, off) {
   me.setLatLng(ll).addTo(map);
   if (!nav.follow && Date.now() - nav.pauseAt > 15000) { nav.follow = true; showFab(); } // 15 秒沒動地圖就自動回來
   if (nav.follow) followMe(ll);
   nav.progress = Math.max(nav.progress, at);
-  // 已跑過的路段變灰
-  const c = fullCoords(), k = nav.cum.findIndex(x => x > nav.progress);
-  doneLine.setLatLngs([...c.slice(0, k < 0 ? c.length : k), pointAt(nav.progress)]).addTo(map);
+  markRun(ll);
   // 前進方向：在路線上用路線方向（穩定），偏離時用 GPS 移動方向
   if (!nav.follow) {} // 使用者正在看地圖，不要自動轉
-  else if (off <= 40) turnMap(bearing(pointAt(nav.progress), pointAt(nav.progress + 25)));
+  else if (off <= 40) turnMap(bearing(pointAt(nav.progress), pointAt(nav.progress + 8))); // 只看前方 8 m：轉過彎才轉地圖，不會提早
   else if (nav.lastFix && nav.lastFix.distanceTo(ll) > 8) turnMap(bearing([nav.lastFix.lat, nav.lastFix.lng], [ll.lat, ll.lng]));
   if (!nav.lastFix || nav.lastFix.distanceTo(ll) > 8) nav.lastFix = ll;
-  const total = nav.cum.at(-1), done = `已跑 ${(nav.progress / 1000).toFixed(2)} / ${(total / 1000).toFixed(2)} km`;
+  const total = nav.cum.at(-1), done = `已跑 ${(nav.ran / 1000).toFixed(2)} / ${(total / 1000).toFixed(2)} km`;
   if (off > 40) {
     card(`⚠ 偏離路線 ${Math.round(off)} m`, done, true);
     if (Date.now() - nav.lastWarn > 30000) { nav.lastWarn = Date.now(); speak('您已偏離路線'); }
@@ -1321,11 +1337,16 @@ function update(ll, at, off) {
     t.said = t.pre = true; beep();
     speak(t.text === '抵達終點' ? '即將抵達終點，辛苦了' : `前方 ${Math.max(5, Math.round(left / 5) * 5)} 公尺，${t.text}`);
   }
-  if (nav.progress >= total - 3) { speak('抵達終點，辛苦了'); stopNav(); card('🏁 完成！', done); }
+  if (nav.progress >= total - 3) {
+    const miss = total - nav.ran;
+    speak('抵達終點，辛苦了'); stopNav();
+    card('🏁 完成！', miss > 100 ? `${done}，約 ${(miss / 1000).toFixed(2)} km 沒跑到（橘色）` : done);
+  }
 }
 async function startNav(sim) {
   if (!buildNav()) return setStatus('請先建立路線');
-  nav.on = true; nav.progress = 0; nav.lastFix = null; nav.turns.forEach(t => t.said = t.pre = false);
+  nav.on = true; nav.progress = 0; nav.ran = 0; nav.lastFix = null;
+  headingUp = true; $('t-head').classList.add('on'); // 導航預設前方朝上，可再按 🧭 關掉 nav.turns.forEach(t => t.said = t.pre = false);
   nav.follow = true; document.body.classList.add('navon'); setFold(true); locOff(); // 導航有自己的定位點
   setMode(null); doneLine.setLatLngs([]); trackLine.setLatLngs([]).addTo(map); $('trackgpx').disabled = true;
   try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {} // 必須在按鈕點擊時建立
