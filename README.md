@@ -76,3 +76,9 @@ GPS Art 是指用跑步軌跡在地圖上畫出圖案，在 Strava 上很流行�
 ## 資料來源
 
 熱門路線來自 [GRASS 台北實測路線](https://grass.camp/blog/strava-art-gps-running-route-guide-taiwan)、Garmin Connect、運動筆記、Strava、Google 我的地圖，版權屬原作者；原始 GPX 不放在 repo 中。地圖 © OpenStreetMap contributors、Esri。
+
+## 授權
+
+© 2026 尤梓薰（Yu Tzu-Hsun）。本專案以 [GNU GPL v3.0](LICENSE) 授權釋出：歡迎使用、學習與修改，但若對外發布修改後的版本，必須同樣以 GPL v3.0 開放完整原始碼，並保留原作者署名。
+
+熱門路線（`routes.js`、`routes/`）的版權屬於各原作者，不在此授權範圍內。第三方套件依各自授權：Leaflet（BSD-2-Clause）、leaflet-rotate（GPL-3.0）。
