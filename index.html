@@ -155,6 +155,7 @@
         <button class="btn blue" id="navgo">▶ 開始導航</button>
         <button class="btn" id="simgo">🧪 模擬試跑</button>
       </div>
+      <label style="margin:8px 0 0"><input type="checkbox" id="smart" checked> 🧠 智慧重排：繞路、反方向或跳到別段時，依你的位置和方向重新規劃還沒跑的部分</label>
       <label>模擬速度 <small id="v-spd">8×</small></label>
       <input type="range" id="spd" min="1" max="30" value="8">
       <div class="row"><button class="btn" id="navstop" disabled>■ 停止</button></div>
@@ -906,6 +907,21 @@ $('hotlist').onclick = e => {
 // 1. 路線每 8 m 取樣，12 m 內的點合併成同一個節點 → 同一條街跑兩次只算一條邊
 // 2. 奇數度節點兩兩配對，沿圖內最短路徑重複那些邊（貪婪配對＋兩兩交換改良）
 // 3. Hierholzer 排出一筆畫順序，路口優先選最直的方向
+// 最小權重配對：貪婪起手，再兩兩交換改良到不能更好
+function pairUp(list, cost) {
+  const pairs = [], free = new Set(list);
+  list.flatMap((a, i) => list.slice(i + 1).map(b => [cost(a, b), a, b])).sort((p, q) => p[0] - q[0])
+    .forEach(([, a, b]) => { if (free.has(a) && free.has(b)) { free.delete(a); free.delete(b); pairs.push([a, b]); } });
+  for (let better = true; better;) {
+    better = false;
+    for (let i = 0; i < pairs.length; i++) for (let j = i + 1; j < pairs.length; j++) {
+      const [a, b] = pairs[i], [c, d] = pairs[j], now = cost(a, b) + cost(c, d);
+      if (cost(a, c) + cost(b, d) < now - 1e-6) { pairs[i] = [a, c]; pairs[j] = [b, d]; better = true; }
+      else if (cost(a, d) + cost(b, c) < now - 1e-6) { pairs[i] = [a, d]; pairs[j] = [b, c]; better = true; }
+    }
+  }
+  return { pairs, total: pairs.reduce((t, p) => t + cost(...p), 0) };
+}
 function optimizeRoute(coords, mustReturn) {
   const o = coords[0], kx = mLng(o[0]), STEP = 8, R = 12;
   const P = coords.map(([a, b]) => [(b - o[1]) * kx, (a - o[0]) * M_LAT]);
@@ -953,21 +969,7 @@ function optimizeRoute(coords, mustReturn) {
     sp.set(s, { D, prev });
   }
   const cost = (a, b) => sp.get(a).D[b];
-  // 最小權重配對：貪婪起手，再兩兩交換改良到不能更好
-  function match(list) {
-    const pairs = [], free = new Set(list);
-    list.flatMap((a, i) => list.slice(i + 1).map(b => [cost(a, b), a, b])).sort((p, q) => p[0] - q[0])
-      .forEach(([, a, b]) => { if (free.has(a) && free.has(b)) { free.delete(a); free.delete(b); pairs.push([a, b]); } });
-    for (let better = true; better;) {
-      better = false;
-      for (let i = 0; i < pairs.length; i++) for (let j = i + 1; j < pairs.length; j++) {
-        const [a, b] = pairs[i], [c, d] = pairs[j], now = cost(a, b) + cost(c, d);
-        if (cost(a, c) + cost(b, d) < now - 1e-6) { pairs[i] = [a, c]; pairs[j] = [b, d]; better = true; }
-        else if (cost(a, d) + cost(b, c) < now - 1e-6) { pairs[i] = [a, d]; pairs[j] = [b, c]; better = true; }
-      }
-    }
-    return { pairs, total: pairs.reduce((t, p) => t + cost(...p), 0) };
-  }
+  const match = list => pairUp(list, cost);
   let { pairs } = match(odd), ends = null;
   // 可以在別處結束：每一對奇數點都試著當起終點，剩下的再配對，取總和最小
   if (!mustReturn && odd.length) {
@@ -1187,9 +1189,6 @@ function buildNav() {
   org = c[0];
   nav.xy = c.map(toXY); nav.cum = [0];
   for (let i = 1; i < c.length; i++) nav.cum.push(nav.cum[i - 1] + Math.hypot(nav.xy[i][0] - nav.xy[i - 1][0], nav.xy[i][1] - nav.xy[i - 1][1]));
-  // 每 5 m 取一個樣本點，記錄「真的跑過」哪些地方
-  nav.samp = [];
-  for (let d = 0, tot = nav.cum.at(-1); d <= tot; d += SAMP) { const q = pointAt(d); nav.samp.push({ at: d, xy: toXY(q), ll: q, done: false }); }
   const k = simplify(nav.xy, 8), steps = segs.flatMap(s => s.steps);
   for (let j = 1; j < k.length - 1; j++) {
     const [a, b, d] = [nav.xy[k[j - 1]], nav.xy[k[j]], nav.xy[k[j + 1]]];
@@ -1280,24 +1279,139 @@ function project(p, lo = nav.progress - 30, hi = nav.progress + 150) {
     const [a, b] = [nav.xy[i], nav.xy[i + 1]], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
     const t = Math.max(0, Math.min(1, ((P[0] - a[0]) * dx + (P[1] - a[1]) * dy) / L2));
     const d = Math.hypot(P[0] - a[0] - t * dx, P[1] - a[1] - t * dy);
-    if (d < best.d) best = { d, at: nav.cum[i] + t * Math.sqrt(L2) };
+    const at = nav.cum[i] + t * Math.sqrt(L2);
+    // 去回同一條街時兩段一樣近：選離目前進度最近的，一樣近就選前面的
+    const near = q => Math.abs(q - nav.progress) - (q >= nav.progress ? 0.5 : 0);
+    if (d < best.d - 1 || (d < best.d + 1 && near(at) < near(best.at))) best = { d, at };
   }
   return best;
 }
 const doneLine = L.polyline([], { color: '#868e96', weight: 6, opacity: .9 });
 const SAMP = 5;
-// 只把 GPS 實際經過（15 m 內）的路段變灰；跳過、繞路沒跑到的地方維持橘色，一眼看得出漏了哪裡
+// ===== 圖案覆蓋紀錄：開始導航時把圖案每 5 m 取樣，GPS 經過的地方標成跑過 =====
+// 記在圖案上而不是路線順序上，重排路線後也不會遺失；用固定原點（不跟著路線重排改變）
+const bxy = p => [(p[1] - nav.bo[1]) * mLng(nav.bo[0]), (p[0] - nav.bo[0]) * M_LAT];
+const bll = ([x, y]) => [nav.bo[0] + y / M_LAT, nav.bo[1] + x / mLng(nav.bo[0])];
+function initBase() {
+  const c = fullCoords(); nav.bo = c[0]; nav.base = []; nav.baseLen = 0; nav.ran = 0;
+  const P = c.map(bxy);
+  for (let i = 1; i < P.length; i++) {
+    const [x0, y0] = P[i - 1], [x1, y1] = P[i], d = Math.hypot(x1 - x0, y1 - y0);
+    if (!d) continue;
+    nav.baseLen += d;
+    const n = Math.ceil(d / SAMP);
+    for (let j = nav.base.length ? 1 : 0; j <= n; j++) nav.base.push({ xy: [x0 + (x1 - x0) * j / n, y0 + (y1 - y0) * j / n], dir: [(x1 - x0) / d, (y1 - y0) / d], done: false });
+  }
+  nav.base.forEach(q => q.ll = bll(q.xy));
+}
+// 15 m 內、且和移動方向平行（同向或反向都算）才標成跑過；路口橫向的街不算
 function markRun(ll) {
-  const P = toXY([ll.lat, ll.lng]); let changed = false;
-  for (const q of nav.samp) {
-    if (q.done || q.at < nav.progress - 200 || q.at > nav.progress + 400) continue; // 只看目前進度附近，避免經過交叉的別段路線也被算進去
-    if (Math.hypot(q.xy[0] - P[0], q.xy[1] - P[1]) < 15) { q.done = true; changed = true; }
+  const P = bxy([ll.lat, ll.lng]), mv = nav.mv; let changed = false;
+  for (const q of nav.base) {
+    if (q.done || Math.abs(q.xy[0] - P[0]) > 15 || Math.abs(q.xy[1] - P[1]) > 15 || Math.hypot(q.xy[0] - P[0], q.xy[1] - P[1]) > 15) continue;
+    if (mv && Math.abs(q.dir[0] * mv[0] + q.dir[1] * mv[1]) < 0.6) continue;
+    q.done = changed = true;
   }
   if (!changed) return;
   const runs = []; let cur = null;
-  for (const q of nav.samp) if (q.done) { if (!cur) runs.push(cur = []); cur.push(q.ll); } else cur = null;
+  for (const q of nav.base) if (q.done) { if (!cur) runs.push(cur = []); cur.push(q.ll); } else cur = null;
   doneLine.setLatLngs(runs).addTo(map);
-  nav.ran = nav.samp.filter(q => q.done).length * SAMP;
+  nav.ran = Math.min(nav.baseLen, nav.base.filter(q => q.done).length * SAMP);
+}
+const nearBase = ll => { const P = bxy([ll.lat, ll.lng]); let m = Infinity; for (const q of nav.base) m = Math.min(m, Math.hypot(q.xy[0] - P[0], q.xy[1] - P[1])); return m; };
+
+// ===== 智慧重排：從目前位置出發，把圖案裡還沒跑的部分排成最短的一筆畫（鄉村郵差問題的近似解） =====
+function planRest(ll) {
+  const B = nav.base, done = B.map(q => q.done);
+  // 30 m 以內、兩端都跑過的小缺口（GPS 飄掉）當作跑過，免得被導回去補一小段
+  for (let i = 0; i < B.length;) {
+    if (done[i]) { i++; continue; }
+    let j = i; while (j < B.length && !done[j]) j++;
+    if (i > 0 && j < B.length && j - i <= 6) for (let k = i; k < j; k++) done[k] = true;
+    i = j;
+  }
+  if (done.every(Boolean)) return null;
+  // 取樣點 12 m 內合併成節點
+  const R = 12, nodes = [], grid = new Map(), id = [];
+  for (const { xy: [x, y] } of B) {
+    const gx = Math.floor(x / R), gy = Math.floor(y / R); let k = -1, bd = R;
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++)
+      for (const m of grid.get((gx + dx) + ',' + (gy + dy)) || []) { const d = Math.hypot(nodes[m][0] - x, nodes[m][1] - y); if (d < bd) { bd = d; k = m; } }
+    if (k < 0) { k = nodes.length; nodes.push([x, y]); const key = gx + ',' + gy; (grid.get(key) || grid.set(key, []).get(key)).push(k); }
+    id.push(k);
+  }
+  const dist = (a, b) => Math.hypot(nodes[a][0] - nodes[b][0], nodes[a][1] - nodes[b][1]);
+  const adj = nodes.map(() => new Map()), req = new Map();
+  for (let i = 1; i < B.length; i++) {
+    const a = id[i - 1], b = id[i]; if (a === b) continue;
+    adj[a].set(b, dist(a, b)); adj[b].set(a, dist(a, b));
+    if (!done[i - 1] || !done[i]) req.set(Math.min(a, b) + ',' + Math.max(a, b), [a, b]);
+  }
+  if (id[0] !== id.at(-1) && dist(id[0], id.at(-1)) < 30) { const w = dist(id[0], id.at(-1)); adj[id[0]].set(id.at(-1), w); adj[id.at(-1)].set(id[0], w); }
+  const P = bxy([ll.lat, ll.lng]);
+  let s = 0; nodes.forEach((n, i) => { if (Math.hypot(n[0] - P[0], n[1] - P[1]) < Math.hypot(nodes[s][0] - P[0], nodes[s][1] - P[1])) s = i; });
+  const t = $('mustret').checked ? id[0] : null; // 要回到起點就以原本的起點結束
+
+  const dij = srcs => {
+    const D = new Float64Array(nodes.length).fill(Infinity), prev = new Int32Array(nodes.length).fill(-1), h = [];
+    srcs.forEach(v => { D[v] = 0; hpush(h, [0, v]); });
+    while (h.length) { const [d, v] = hpop(h); if (d > D[v]) continue; for (const [u, w] of adj[v]) if (d + w < D[u]) { D[u] = d + w; prev[u] = v; hpush(h, [D[u], u]); } }
+    return { D, prev };
+  };
+  const E = [], deg = new Int32Array(nodes.length);
+  const addE = (a, b) => { E.push([a, b]); deg[a]++; deg[b]++; };
+  const addPath = (prev, v) => { for (; prev[v] >= 0; v = prev[v]) addE(prev[v], v); };
+  req.forEach(([a, b]) => addE(a, b));
+
+  // 1) 把各塊沒跑的部分和起點（與終點）用最短路接成一整塊（類似 Prim 的最小生成樹）
+  const par = nodes.map((_, i) => i), find = x => par[x] === x ? x : (par[x] = find(par[x]));
+  req.forEach(([a, b]) => par[find(a)] = find(b));
+  const comps = new Map(), addV = v => { const r = find(v); (comps.get(r) || comps.set(r, []).get(r)).push(v); };
+  req.forEach(([a, b]) => { addV(a); addV(b); }); addV(s); if (t != null) addV(t);
+  let joined = [...comps.get(find(s))]; const left = new Set([...comps.keys()].filter(r => r !== find(s)));
+  while (left.size) {
+    const { D, prev } = dij(joined);
+    let best = -1;
+    for (const r of left) for (const v of comps.get(r)) if (best < 0 || D[v] < D[best]) best = v;
+    if (best < 0 || D[best] === Infinity) break;
+    addPath(prev, best); const r = find(best); left.delete(r); joined = joined.concat(comps.get(r));
+  }
+  // 2) 奇數度節點配對：一筆畫從 s 出發、在 t（或任一點）結束
+  const X = new Set(); deg.forEach((d, v) => { if (d % 2) X.add(v); });
+  const flip = v => X.has(v) ? X.delete(v) : X.add(v);
+  flip(s); if (t != null) flip(t);
+  const xs = [...X], sp = new Map(xs.map(v => [v, dij([v])])), cost = (a, b) => sp.get(a).D[b];
+  let pairs = [];
+  if (t != null) pairs = pairUp(xs, cost).pairs;
+  else { let bt = Infinity; for (const e of xs) { const m = pairUp(xs.filter(v => v !== e), cost); if (m.total < bt) { bt = m.total; pairs = m.pairs; } } }
+  for (const [a, b] of pairs) addPath(sp.get(a).prev, b);
+  // 3) Hierholzer：第一步選和你前進方向最一致的邊（決定順時針或逆時針），之後路口優先直行
+  const inc = nodes.map(() => []); E.forEach(([a, b], e) => { inc[a].push(e); inc[b].push(e); });
+  const used = new Uint8Array(E.length), stack = [s], path = [], mv = nav.mv;
+  while (stack.length) {
+    const v = stack.at(-1), from = stack.length > 1 ? stack.at(-2) : -1;
+    let best = -1, bs = -Infinity;
+    for (const e of inc[v]) if (!used[e]) {
+      const u = E[e][0] === v ? E[e][1] : E[e][0], dx = nodes[u][0] - nodes[v][0], dy = nodes[u][1] - nodes[v][1], L0 = Math.hypot(dx, dy) || 1;
+      const ref = from >= 0 ? [nodes[v][0] - nodes[from][0], nodes[v][1] - nodes[from][1]] : mv;
+      const sc = ref ? (dx * ref[0] + dy * ref[1]) / L0 / (Math.hypot(...ref) || 1) : 0;
+      if (sc > bs) { bs = sc; best = e; }
+    }
+    if (best < 0) path.push(stack.pop());
+    else { used[best] = 1; stack.push(E[best][0] === v ? E[best][1] : E[best][0]); }
+  }
+  path.reverse();
+  return path.length > 1 ? path.map(v => bll(nodes[v])) : null;
+}
+function replan(ll, why) {
+  if (!$('smart').checked || Date.now() - nav.lastPlan < 8000) return false;
+  nav.lastPlan = Date.now();
+  const c = planRest(ll);
+  if (!c) return false;
+  segs = [{ coords: c, dist: lenKm(c) * 1000, steps: [] }]; waypoints = [L.latLng(c[0]), L.latLng(c.at(-1))];
+  refresh(); buildNav(); nav.progress = 0; nav.replanned = true; nav.offN = nav.wrongN = 0;
+  speak(`${why}，已依你現在的位置和方向重新規劃，剩下 ${(nav.cum.at(-1) / 1000).toFixed(1)} 公里`);
+  return true;
 }
 const trackLine = L.polyline([], { color: '#1c7ed6', weight: 3, dashArray: '4 6' });
 // 方位角（北 = 0，順時針）
@@ -1314,6 +1428,16 @@ function update(ll, at, off) {
   if (!nav.follow && Date.now() - nav.pauseAt > 15000) { nav.follow = true; showFab(); } // 15 秒沒動地圖就自動回來
   if (nav.follow) followMe(ll);
   nav.progress = Math.max(nav.progress, at);
+  if (!nav.prevLL || nav.prevLL.distanceTo(ll) > 4) {
+    if (nav.prevLL) { const a = bxy([nav.prevLL.lat, nav.prevLL.lng]), b = bxy([ll.lat, ll.lng]), d = Math.hypot(b[0] - a[0], b[1] - a[1]); nav.mv = [(b[0] - a[0]) / d, (b[1] - a[1]) / d]; }
+    nav.prevLL = ll;
+    // 在路線上卻和路線方向相反（例如一圈的路線你選了另一個方向）→ 連續 3 次就重排
+    if (off < 20 && nav.mv) {
+      const a = toXY(pointAt(nav.progress)), b = toXY(pointAt(nav.progress + 8)), d = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      nav.wrongN = (nav.mv[0] * (b[0] - a[0]) + nav.mv[1] * (b[1] - a[1])) / d < -0.5 ? nav.wrongN + 1 : 0;
+      if (nav.wrongN >= 3 && replan(ll, '偵測到你往另一個方向跑')) { const pr = project(ll); return update(ll, pr.at, pr.d); }
+    }
+  }
   markRun(ll);
   // 前進方向：在路線上用路線方向（穩定），偏離時用 GPS 移動方向
   if (!nav.follow) {} // 使用者正在看地圖，不要自動轉
@@ -1343,10 +1467,27 @@ function update(ll, at, off) {
     card('🏁 完成！', miss > 100 ? `${done}，約 ${(miss / 1000).toFixed(2)} km 沒跑到（橘色）` : done);
   }
 }
+// 每一筆 GPS 定位
+function onFix(ll) {
+  trackLine.addLatLng(ll);
+  let pr = project(ll);
+  if (pr.d > 40) {
+    nav.offN++;
+    // 不在預期路段，但在圖案上（繞路回來、跳到別段、從中間開始跑）→ 依目前位置重排剩下的路
+    if (nav.offN >= 2 && nearBase(ll) < 20 && replan(ll, '你沒照原路線跑')) pr = project(ll);
+    else if (!$('smart').checked) { // 沒開智慧重排：看看是不是抄捷徑接到後面的路線了
+      const far = project(ll, nav.progress + 150, Infinity);
+      if (far.d < 25) { speak(`已接回路線，跳過 ${Math.round((far.at - nav.progress) / 100) / 10} 公里`); nav.turns.forEach(t => { if (t.at < far.at) t.said = t.pre = true; }); pr = far; }
+    }
+  } else nav.offN = 0;
+  update(ll, pr.d < 40 ? pr.at : nav.progress, pr.d);
+}
 async function startNav(sim) {
   if (!buildNav()) return setStatus('請先建立路線');
   nav.on = true; nav.progress = 0; nav.ran = 0; nav.lastFix = null;
-  headingUp = true; $('t-head').classList.add('on'); // 導航預設前方朝上，可再按 🧭 關掉 nav.turns.forEach(t => t.said = t.pre = false);
+  nav.turns.forEach(t => t.said = t.pre = false);
+  headingUp = true; $('t-head').classList.add('on'); // 導航預設前方朝上，可再按 🧭 關掉
+  nav.orig = fullCoords(); nav.replanned = false; nav.lastPlan = 0; nav.offN = 0; nav.wrongN = 0; nav.mv = null; nav.prevLL = null; initBase();
   nav.follow = true; document.body.classList.add('navon'); setFold(true); locOff(); // 導航有自己的定位點
   setMode(null); doneLine.setLatLngs([]); trackLine.setLatLngs([]).addTo(map); $('trackgpx').disabled = true;
   try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {} // 必須在按鈕點擊時建立
@@ -1364,20 +1505,12 @@ async function startNav(sim) {
     }, 200);
   } else {
     if (!navigator.geolocation) return setStatus('此瀏覽器不支援定位');
-    nav.watch = navigator.geolocation.watchPosition(pos => {
-      const ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
-      trackLine.addLatLng(ll);
-      let pr = project(ll);
-      if (pr.d > 40) { // 不在預期路段：看看是不是抄捷徑接到後面的路線了
-        const far = project(ll, nav.progress + 150, Infinity);
-        if (far.d < 25) { speak(`已接回路線，跳過 ${Math.round((far.at - nav.progress) / 100) / 10} 公里`); nav.turns.forEach(t => { if (t.at < far.at) t.said = t.pre = true; }); pr = far; }
-      }
-      update(ll, pr.d < 40 ? pr.at : nav.progress, pr.d);
-    }, e => setStatus('定位失敗：' + e.message + '（需 HTTPS 並允許定位權限）'), { enableHighAccuracy: true, maximumAge: 1000 });
+    nav.watch = navigator.geolocation.watchPosition(pos => onFix(L.latLng(pos.coords.latitude, pos.coords.longitude)), e => setStatus('定位失敗：' + e.message + '（需 HTTPS 並允許定位權限）'), { enableHighAccuracy: true, maximumAge: 1000 });
   }
 }
 function stopNav() {
   nav.on = false;
+  if (nav.replanned) { const keep = doneLine.getLatLngs(); loadCoords(nav.orig); doneLine.setLatLngs(keep); }
   clearInterval(nav.sim); nav.sim = null;
   if (nav.watch !== null) navigator.geolocation.clearWatch(nav.watch); nav.watch = null;
   nav.lock && nav.lock.release(); nav.lock = null;
