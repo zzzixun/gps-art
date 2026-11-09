@@ -119,8 +119,8 @@
       <select id="tplsel"></select>
       <div id="padbox" style="display:none">
         <canvas id="pad" width="300" height="300" style="width:100%;max-width:300px;aspect-ratio:1;border:1px solid var(--line);border-radius:8px;touch-action:none;background:#fff;margin-top:8px"></canvas>
-        <div class="row"><button class="btn" id="padundo">↶ 復原一筆</button><button class="btn" id="padclear">清除</button></div>
-        <div class="hint">一筆一筆畫：先畫外框（橘色），再畫眼睛、嘴巴、腳等細節（藍色）。頭尾接近的筆畫會自動接成一圈。細節要畫大一點（約佔整張圖 1/6 以上），太小的會被街道吃掉。畫好後用下面的「✨ 自動生成」。</div>
+        <div class="row"><button class="btn pri" id="padpen">✏️ 畫筆</button><button class="btn" id="paderase">🧽 橡皮擦</button><button class="btn" id="padundo">↶ 復原</button><button class="btn" id="padclear">清除</button></div>
+        <div class="hint">一筆一筆畫：先畫外框（橘色），再畫眼睛、嘴巴、腳等細節（藍色）。頭尾接近的筆畫會自動接成一圈；畫錯可以用橡皮擦擦掉一部分，或按復原。細節要畫大一點（約佔整張圖 1/6 以上），太小的會被街道吃掉。畫好後用下面的「✨ 自動生成」。</div>
       </div>
       <label>寬度 <small id="v-tsz">2000 m</small></label>
       <input type="range" id="tsz" min="500" max="6000" step="100" value="2000">
@@ -837,14 +837,30 @@ const TEMPLATES = {
   '🐟 魚': [[-.6,0],[-.2,.4],[.4,.45],[1,0],[.4,-.45],[-.2,-.4],[-.6,0],[-1,-.4],[-1,.4]],
   '🏠 房子': [[-.8,-1],[-.8,.2],[0,1],[.8,.2],[.8,-1]],
   '➡️ 箭頭': [[-1,-.2],[.3,-.2],[.3,-.6],[1,0],[.3,.6],[.3,.2],[-1,.2]],
+  // 以下由 shapely 組合幾何圖形產生；{ s: [[點, 是否封閉], ...] } 是多筆畫（外框＋眼睛等細節），要用「自動生成」
+  '🍀 四葉草': { s: [[[[0.35,-0.04],[0.68,-0.02],[0.81,-0.07],[0.91,-0.17],[0.94,-0.3],[0.88,-0.47],[0.78,-0.56],[0.65,-0.59],[0.62,-0.72],[0.54,-0.82],[0.36,-0.88],[0.18,-0.82],[0.08,-0.64],[0.1,-0.29],[-0.1,-0.29],[-0.08,-0.61],[-0.12,-0.74],[-0.27,-0.86],[-0.46,-0.86],[-0.6,-0.75],[-0.65,-0.59],[-0.78,-0.56],[-0.88,-0.48],[-0.94,-0.28],[-0.88,-0.13],[-0.77,-0.04],[-0.35,-0.04],[-0.35,0.16],[-0.67,0.14],[-0.8,0.18],[-0.92,0.33],[-0.92,0.52],[-0.81,0.66],[-0.65,0.71],[-0.62,0.84],[-0.54,0.94],[-0.34,1],[-0.19,0.94],[-0.1,0.82],[-0.1,0.41],[0.1,0.41],[0.08,0.73],[0.12,0.86],[0.27,0.98],[0.46,0.98],[0.6,0.87],[0.65,0.71],[0.77,0.68],[0.87,0.61],[0.94,0.45],[0.9,0.28],[0.78,0.17],[0.66,0.14],[0.35,0.16]], true], [[[0,-0.3],[0.11,-0.65],[0.33,-1]], false]] },
+  '👻 小鬼': { s: [[[[-0.29,-1],[-0.41,-0.82],[-0.59,-0.76],[-0.77,-0.82],[-0.87,-0.98],[-0.85,0.34],[-0.7,0.65],[-0.45,0.88],[-0.13,0.99],[0.21,0.97],[0.41,0.9],[0.59,0.77],[0.73,0.61],[0.82,0.42],[0.87,0.17],[0.87,-0.98],[0.77,-0.82],[0.59,-0.76],[0.4,-0.83],[0.29,-1],[0.19,-0.83],[0.01,-0.76],[-0.17,-0.81]], true], [[[-0.18,0.19],[-0.2,0.07],[-0.26,-0.01],[-0.34,-0.02],[-0.41,0.04],[-0.45,0.23],[-0.37,0.38],[-0.24,0.36]], true], [[[0.45,0.19],[0.43,0.07],[0.37,-0.01],[0.29,-0.02],[0.22,0.04],[0.18,0.23],[0.26,0.38],[0.39,0.36]], true]] },
+  '🐱 貓咪': { s: [[[[0.97,-0.24],[0.91,-0.47],[0.81,-0.64],[0.62,-0.82],[0.37,-0.94],[0.14,-0.99],[-0.14,-0.99],[-0.42,-0.92],[-0.62,-0.82],[-0.86,-0.58],[-0.97,-0.28],[-0.86,1],[-0.39,0.53],[0,0.6],[0.39,0.53],[0.86,1],[0.91,0.08]], true], [[[-0.22,-0.14],[-0.26,-0.25],[-0.37,-0.29],[-0.47,-0.25],[-0.51,-0.14],[-0.47,-0.04],[-0.37,0.01],[-0.26,-0.04]], true], [[[0.51,-0.14],[0.47,-0.25],[0.37,-0.29],[0.26,-0.25],[0.22,-0.14],[0.26,-0.04],[0.37,0.01],[0.47,-0.04]], true]] },
+  '😊 笑臉': { s: [[[[1,0],[0.92,-0.38],[0.71,-0.71],[0.38,-0.92],[0,-1],[-0.38,-0.92],[-0.71,-0.71],[-0.92,-0.38],[-1,0],[-0.92,0.38],[-0.71,0.71],[-0.38,0.92],[0,1],[0.38,0.92],[0.71,0.71],[0.92,0.38]], true], [[[-0.23,0.3],[-0.25,0.19],[-0.32,0.13],[-0.38,0.13],[-0.45,0.19],[-0.46,0.35],[-0.39,0.47],[-0.28,0.44]], true], [[[0.47,0.3],[0.42,0.16],[0.32,0.13],[0.24,0.25],[0.25,0.41],[0.32,0.47],[0.39,0.47]], true], [[[-0.56,-0.16],[-0.42,-0.38],[-0.32,-0.46],[-0.07,-0.55],[0.07,-0.55],[0.32,-0.46],[0.5,-0.27],[0.56,-0.16]], false]] },
+  '🐻 熊': { s: [[[[0.87,-0.12],[0.83,-0.33],[0.75,-0.53],[0.61,-0.7],[0.45,-0.83],[0.25,-0.91],[0.04,-0.95],[-0.17,-0.93],[-0.37,-0.87],[-0.64,-0.67],[-0.82,-0.37],[-0.87,-0.04],[-0.77,0.31],[-0.89,0.38],[-0.98,0.5],[-1,0.64],[-0.97,0.76],[-0.84,0.9],[-0.66,0.95],[-0.47,0.88],[-0.36,0.71],[0,0.79],[0.36,0.71],[0.42,0.83],[0.53,0.92],[0.67,0.95],[0.81,0.92],[0.95,0.81],[1,0.64],[0.95,0.44],[0.77,0.31],[0.85,0.09]], true], [[[-0.21,0.03],[-0.24,-0.06],[-0.33,-0.09],[-0.41,-0.06],[-0.45,0.03],[-0.41,0.11],[-0.33,0.15],[-0.24,0.11]], true], [[[0.45,0.03],[0.41,-0.06],[0.33,-0.09],[0.24,-0.06],[0.21,0.03],[0.24,0.11],[0.33,0.15],[0.41,0.11]], true]] },
+  '🐰 兔子': { s: [[[[0.69,-0.45],[0.65,-0.62],[0.53,-0.79],[0.38,-0.9],[0.2,-0.98],[-0.03,-1],[-0.23,-0.97],[-0.44,-0.87],[-0.57,-0.74],[-0.67,-0.56],[-0.68,-0.36],[-0.59,-0.12],[-0.4,0.05],[-0.5,0.59],[-0.48,0.85],[-0.41,0.98],[-0.3,0.97],[-0.19,0.79],[-0.11,0.48],[-0.09,0.16],[0.09,0.16],[0.12,0.51],[0.2,0.81],[0.32,0.98],[0.43,0.97],[0.49,0.81],[0.5,0.57],[0.4,0.05],[0.62,-0.17]], true], [[[-0.14,-0.37],[-0.17,-0.46],[-0.26,-0.49],[-0.35,-0.46],[-0.39,-0.37],[-0.35,-0.28],[-0.26,-0.24],[-0.17,-0.28]], true], [[[0.39,-0.37],[0.35,-0.46],[0.26,-0.49],[0.17,-0.46],[0.14,-0.37],[0.17,-0.28],[0.26,-0.24],[0.35,-0.28]], true]] },
+  '🌙 月亮': [[0.94,-0.49],[0.66,-0.8],[0.31,-0.97],[-0.08,-0.99],[-0.45,-0.86],[-0.74,-0.6],[-0.91,-0.24],[-0.93,0.15],[-0.79,0.51],[-0.64,0.71],[-0.41,0.88],[-0.18,0.97],[0.11,1],[-0.14,0.79],[-0.3,0.5],[-0.33,0.17],[-0.24,-0.15],[-0.03,-0.41],[0.27,-0.56],[0.6,-0.6]],
+  '⚡ 閃電': [[0.15,1],[-0.5,-0.05],[-0.05,-0.05],[-0.25,-1],[0.5,0.2],[0.05,0.2],[0.4,1]],
+  '☁️ 雲': [[0.82,-0],[0.96,-0.14],[1,-0.34],[0.91,-0.52],[0.73,-0.61],[-0.67,-0.64],[-0.88,-0.53],[-1,-0.3],[-0.94,-0.03],[-0.84,0.09],[-0.68,0.16],[-0.65,0.31],[-0.56,0.46],[-0.43,0.57],[-0.25,0.64],[0.03,0.6],[0.23,0.45],[0.41,0.47],[0.59,0.41],[0.76,0.24]],
+  '🍎 蘋果': { s: [[[[0,-0.82],[-0.22,-0.91],[-0.44,-0.92],[-0.66,-0.85],[-0.83,-0.71],[-0.95,-0.52],[-1,-0.3],[-0.97,-0.08],[-0.89,0.09],[-0.68,0.29],[-0.41,0.38],[-0.19,0.36],[0,0.28],[0.19,0.36],[0.41,0.38],[0.71,0.27],[0.89,0.09],[0.99,-0.14],[0.99,-0.4],[0.89,-0.63],[0.71,-0.81],[0.51,-0.9],[0.28,-0.92]], true], [[[0,0.38],[0.05,0.71],[0.16,0.92]], false], [[[0.68,0.85],[0.65,0.74],[0.49,0.62],[0.3,0.57],[0.19,0.62],[0.22,0.74],[0.38,0.86],[0.57,0.9]], true]] },
+  '🎄 聖誕樹': [[-0.15,-1],[-0.15,-0.59],[-0.87,-0.59],[-0.27,-0.13],[-0.67,-0.13],[-0.21,0.33],[-0.46,0.33],[0,1],[0.46,0.33],[0.21,0.33],[0.67,-0.13],[0.27,-0.13],[0.87,-0.59],[0.15,-0.59],[0.15,-1]],
 };
 let tplCenter = null, tplSize = 2000, tplRot = 0;
 Object.keys(TEMPLATES).forEach(k => $('tplsel').add(new Option(k, k)));
 $('tplsel').add(new Option('✏️ 自己畫（畫板，可畫多筆）', 'pad'));
+// 臉、動物、房子等要保持正立，自動生成只轉 ±15°；其他圖案可以轉 ±45°
+const UPRIGHT = new Set(['🐕 臘腸狗', '🏠 房子', '👻 小鬼', '🐱 貓咪', '😊 笑臉', '🐻 熊', '🐰 兔子', '🍎 蘋果', '🎄 聖誕樹', '⚡ 閃電', 'pad']);
+const multiTpl = () => $('tplsel').value === 'pad' || !Array.isArray(TEMPLATES[$('tplsel').value]); // 多筆畫只能用自動生成
 
 // ===== 手繪畫板：一筆一筆畫，外框＋眼睛、嘴巴等細節 =====
 const pad = $('pad'), pctx = pad.getContext('2d');
-let padStrokes = [], padCur = null;
+const ERASER = 14; // 橡皮擦半徑（畫板像素）
+let padStrokes = [], padCur = null, padErase = false, padDown = false, padCursor = null, padHist = [];
 function padDraw() {
   pctx.clearRect(0, 0, pad.width, pad.height);
   pctx.lineWidth = 4; pctx.lineCap = pctx.lineJoin = 'round';
@@ -852,29 +868,71 @@ function padDraw() {
     pctx.strokeStyle = i ? '#1c7ed6' : '#e8590c';
     pctx.beginPath(); s.forEach(([x, y], j) => j ? pctx.lineTo(x, y) : pctx.moveTo(x, y)); pctx.stroke();
   });
+  if (padErase && padCursor) { pctx.lineWidth = 1.5; pctx.strokeStyle = '#868e96'; pctx.beginPath(); pctx.arc(...padCursor, ERASER, 0, 2 * Math.PI); pctx.stroke(); }
 }
 const padXY = e => { const r = pad.getBoundingClientRect(); return [(e.clientX - r.left) * pad.width / r.width, (e.clientY - r.top) * pad.height / r.height]; };
-pad.onpointerdown = e => { pad.setPointerCapture(e.pointerId); padCur = [padXY(e)]; };
-pad.onpointermove = e => { if (padCur) { padCur.push(padXY(e)); padDraw(); } };
-pad.onpointerup = pad.onpointercancel = () => { if (padCur && padCur.length > 2) padStrokes.push(padCur); padCur = null; padDraw(); drawTpl(); };
-$('padundo').onclick = () => { padStrokes.pop(); padDraw(); drawTpl(); };
-$('padclear').onclick = () => { padStrokes = []; padDraw(); drawTpl(); };
+const padSave = () => { padHist.push(padStrokes.map(s => [...s])); if (padHist.length > 50) padHist.shift(); };
+// 筆畫補點到每 4 像素一點，橡皮擦才不會漏擦
+const densify = s => s.flatMap((p, i) => {
+  if (!i) return [p];
+  const q = s[i - 1], n = Math.ceil(Math.hypot(p[0] - q[0], p[1] - q[1]) / 4);
+  return Array.from({ length: n }, (_, k) => [q[0] + (p[0] - q[0]) * (k + 1) / n, q[1] + (p[1] - q[1]) * (k + 1) / n]);
+});
+// 擦掉橡皮擦範圍內的點，筆畫在那裡斷成兩段
+function padEraseAt([x, y]) {
+  const out = [];
+  for (const s of padStrokes) {
+    const pieces = [];
+    let cur = [];
+    for (const q of s) {
+      if (Math.hypot(q[0] - x, q[1] - y) < ERASER) { if (cur.length > 1) pieces.push(cur); cur = []; } else cur.push(q);
+    }
+    if (cur.length > 1) pieces.push(cur);
+    // 一圈的筆畫擦斷後，頭尾那兩段其實是相連的，接回同一段
+    if (pieces.length > 1 && Math.hypot(s[0][0] - s.at(-1)[0], s[0][1] - s.at(-1)[1]) < 8 && pieces[0][0] === s[0] && pieces.at(-1).at(-1) === s.at(-1))
+      pieces[0] = [...pieces.pop(), ...pieces[0]];
+    out.push(...pieces);
+  }
+  padStrokes = out;
+}
+pad.onpointerdown = e => {
+  pad.setPointerCapture(e.pointerId); padDown = true; padSave();
+  if (padErase) { padEraseAt(padXY(e)); padDraw(); } else padCur = [padXY(e)];
+};
+pad.onpointermove = e => {
+  padCursor = padXY(e);
+  if (padErase) { if (padDown) padEraseAt(padCursor); padDraw(); }
+  else if (padCur) { padCur.push(padCursor); padDraw(); }
+};
+pad.onpointerup = pad.onpointercancel = () => {
+  padDown = false;
+  if (padCur && padCur.length > 2) padStrokes.push(densify(padCur));
+  else if (padCur) padHist.pop(); // 只點一下，不算一步
+  padCur = null; padDraw(); drawTpl();
+};
+pad.onpointerleave = () => { padCursor = null; padDraw(); };
+const setPadMode = erase => { padErase = erase; $('padpen').classList.toggle('pri', !erase); $('paderase').classList.toggle('pri', erase); padDraw(); };
+$('padpen').onclick = () => setPadMode(false);
+$('paderase').onclick = () => setPadMode(true);
+$('padundo').onclick = () => { if (padHist.length) { padStrokes = padHist.pop(); padDraw(); drawTpl(); } };
+$('padclear').onclick = () => { if (padStrokes.length) { padSave(); padStrokes = []; padDraw(); drawTpl(); } };
 // 目前的圖案 → 筆畫列表 [{pts, closed}]，座標約在 [-1, 1]、y 朝上；手繪筆畫頭尾接近就視為一圈
 function curStrokes() {
-  if ($('tplsel').value !== 'pad') return [{ pts: TEMPLATES[$('tplsel').value], closed: true }];
+  const t = TEMPLATES[$('tplsel').value];
+  if (t) return Array.isArray(t) ? [{ pts: t, closed: true }] : t.s.map(([pts, closed]) => ({ pts, closed }));
   const all = padStrokes.flat(); if (!all.length) return [];
   const xs = all.map(p => p[0]), ys = all.map(p => p[1]);
   const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
   const k = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2 || 1;
   return padStrokes.map(s => {
     const raw = s.map(([x, y]) => [(x - cx) / k, (cy - y) / k]), p = simplify(raw, 0.015).map(i => raw[i]);
-    return { pts: p, closed: p.length > 3 && Math.hypot(p[0][0] - p.at(-1)[0], p[0][1] - p.at(-1)[1]) < 0.2 };
+    return { pts: p, closed: p.length > 3 && Math.hypot(p[0][0] - p.at(-1)[0], p[0][1] - p.at(-1)[1]) < 0.12 };
   }).filter(s => polyLen(s.pts) > 0.1); // 太短的點點不算
 }
 const strokeLine = s => s.closed ? [...s.pts, s.pts[0]] : s.pts;
 // 把範本放大到公尺、閉合，長邊再插點避免抄捷徑
 function tplPoints() {
-  if ($('tplsel').value === 'pad') return curStrokes().map(s => place(strokeLine(s).map(([x, y]) => [x * tplSize / 2, y * tplSize / 2]), tplCenter, tplRot));
+  if (multiTpl()) return curStrokes().map(s => place(strokeLine(s).map(([x, y]) => [x * tplSize / 2, y * tplSize / 2]), tplCenter, tplRot));
   const raw = TEMPLATES[$('tplsel').value].map(([x, y]) => [x * tplSize / 2, y * tplSize / 2]);
   raw.push(raw[0]);
   const out = [], maxSeg = Math.max(250, tplSize / 10);
@@ -893,13 +951,13 @@ function drawTpl() {
 $('tplsel').onchange = () => { $('padbox').style.display = $('tplsel').value === 'pad' ? '' : 'none'; drawTpl(); };
 bindRange('tsz', v => v + ' m', v => { tplSize = v; drawTpl(); });
 bindRange('trot', v => v + '°', v => { tplRot = v; drawTpl(); });
-$('tplgo').onclick = () => $('tplsel').value === 'pad' ? setStatus('手繪圖案請用下面的「✨ 自動生成」') : setRoute(tplPoints());
+$('tplgo').onclick = () => multiTpl() ? setStatus('這個圖案有多筆畫，請用下面的「✨ 自動生成」') : setRoute(tplPoints());
 
 // 在目前畫面裡搜尋：每個候選（位置 × 角度 × 大小）把圖案取樣，查「離最近道路多遠」的平均，越小越貼路
 const candLayer = L.layerGroup().addTo(map);
 let tplCands = [];
 $('tplfind').onclick = async () => {
-  if ($('tplsel').value === 'pad') return setStatus('手繪圖案請用下面的「✨ 自動生成」');
+  if (multiTpl()) return setStatus('這個圖案有多筆畫，請用下面的「✨ 自動生成」');
   try { await ensureNet(map.getBounds()); } catch (e) { return setStatus(e.message); }
   setStatus('搜尋中…'); await new Promise(r => setTimeout(r, 30));
   const t0 = performance.now(), shape = TEMPLATES[$('tplsel').value], raw = [...shape, shape[0]];
@@ -1073,7 +1131,8 @@ function scoreRoute(R, Ts, size) {
   const rl = polyLen(R), tl = Ts.reduce((s, { T }) => s + polyLen(T), 0);
   if (rl < 0.6 * tl) return null; // 跳過太多路標，縮成一小圈
   const mean = (pts, f) => pts.reduce((s, [x, y]) => s + f(x, y), 0) / pts.length;
-  const miss = mean(Ts.flatMap(({ T }) => resampleXY(T, 10)), (x, y) => distToPoly(x, y, R));
+  const md = Ts.flatMap(({ T }) => resampleXY(T, 10)).map(([x, y]) => distToPoly(x, y, R));
+  const miss = md.reduce((a, d) => a + d, 0) / md.length, gap = md.filter(d => d > 0.04 * size).length / md.length; // gap：整塊沒畫到（例如少一隻耳朵）的比例
   const wander = mean(resampleXY(R, 10), (x, y) => Math.min(...Ts.map(({ T }) => distToPoly(x, y, T))));
   // 尖角：轉超過 40° 的頂點，有幾成在路線 3% 圖寬以內
   const turn = (q, p, r) => { const ax = p[0] - q[0], ay = p[1] - q[1], bx = r[0] - p[0], by = r[1] - p[1]; return Math.abs(Math.atan2(ax * by - ay * bx, ax * bx + ay * by)); };
@@ -1083,19 +1142,19 @@ function scoreRoute(R, Ts, size) {
   });
   const kept = cs.length ? cs.filter(([x, y]) => distToPoly(x, y, R) < 0.03 * size).length / cs.length : 1;
   const thr = Ts.length > 1 ? 1.4 : 1.25; // 多筆要多跑連接段，容許多一點
-  return { score: (miss + wander) / 2 / size * 100 + 20 * (1 - kept) + 10 * Math.max(0, rl / tl - thr), miss, wander, kept, km: rl / 1000 };
+  return { score: (miss + wander) / 2 / size * 100 + 20 * (1 - kept) + 50 * gap + 10 * Math.max(0, rl / tl - thr), miss, wander, kept, gap, km: rl / 1000 };
 }
 
 // 一輪搜尋：固定圖案大小（±10%），粗搜圓圈內的擺法，前 8 名實際沿街道找路、接成一條、評分
 async function autoPass(strokes, size, R, ox, oy, label) {
   const lines = strokes.map(strokeLine), ru = Math.max(...lines.flat().map(([u, v]) => Math.hypot(u, v))), multi = strokes.length > 1;
-  const cands = [];
+  const rotLim = UPRIGHT.has($('tplsel').value) ? 15 : 45, cands = [];
   for (const sc of [0.9, 1, 1.1]) {
     const sz = size * sc, step = Math.max(50, sz / 15), pts = lines.flatMap(l => resampleXY(l, 30 / (sz / 2))), lim = R - ru * sz / 2;
     if (lim < 0) continue;
     for (let cx = ox - lim; cx <= ox + lim; cx += step) for (let cy = oy - lim; cy <= oy + lim; cy += step) {
       if (Math.hypot(cx - ox, cy - oy) > lim) continue;
-      for (let rot = -45; rot <= 45; rot += 15) {
+      for (let rot = -rotLim; rot <= rotLim; rot += rotLim / 3) {
         const r = rot * Math.PI / 180, c = Math.cos(r), s = Math.sin(r), k = sz / 2; let t = 0;
         for (const [u, v] of pts) t += net.roadDist(cx + (u * c + v * s) * k, cy + (-u * s + v * c) * k);
         cands.push([t / pts.length, cx, cy, sz, rot]);
@@ -1105,7 +1164,7 @@ async function autoPass(strokes, size, R, ox, oy, label) {
   cands.sort((a, b) => a[0] - b[0]);
   const seeds = [];
   for (const c of cands) {
-    if (seeds.some(q => Math.hypot(q[1] - c[1], q[2] - c[2]) < c[3] / 4 && Math.abs(q[4] - c[4]) < 30)) continue;
+    if (seeds.some(q => Math.hypot(q[1] - c[1], q[2] - c[2]) < c[3] / 4 && Math.abs(q[4] - c[4]) < rotLim * 2 / 3)) continue;
     seeds.push(c); if (seeds.length === 8) break;
   }
   const res = [];
