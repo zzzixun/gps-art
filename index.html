@@ -300,6 +300,28 @@ async function overpass(q) {
   }
   throw new Error('路網伺服器忙碌中，請稍後再試（已下載的區塊會保留，再按一次會接著下載）');
 }
+// 雙北預先打包的路網（build_net.py 產生，放在 net/）；本機開檔時讀不到就全部改用 Overpass
+let preIdx; // undefined = 還沒讀過
+async function preIndex() {
+  if (preIdx !== undefined) return preIdx;
+  try { const r = await fetch('net/index.json'); preIdx = r.ok ? await r.json() : null; } catch (e) { preIdx = null; }
+  if (preIdx) preIdx.have = new Set(preIdx.tiles);
+  return preIdx;
+}
+// 解回和 Overpass 相同的元素格式，後面的程式不用改
+const preFiles = new Map();
+function preTile(key) {
+  if (!preFiles.has(key)) preFiles.set(key, fetch(`net/${key}.json?v=${preIdx.v}`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(({ n, w, s }) => {
+    const els = [], ids = [], [ti, tj] = key.split('_').map(Number), la0 = Math.round(ti * preIdx.tile * 1e6), lo0 = Math.round(tj * preIdx.tile * 1e6);
+    let id = 0;
+    n.forEach(([d, la, lo]) => { id += d; ids.push(id); els.push({ type: 'node', id, lat: (la + la0) / 1e6, lon: (lo + lo0) / 1e6 }); });
+    s.forEach(k => { els[k].tags = { highway: 'traffic_signals' }; });
+    // 同一條路在不同塊各存一段，id 加上塊名才不會被當成重複刪掉
+    w.forEach(([wid, h, nd], x) => els.push({ type: 'way', id: `${wid}_${key}_${x}`, nodes: nd.map(k => ids[k]), tags: h >= 100 ? { highway: preIdx.hw[h - 100], footway: 'sidewalk' } : { highway: preIdx.hw[h] } }));
+    return els;
+  }).catch(e => { preFiles.delete(key); throw e; }));
+  return preFiles.get(key);
+}
 async function ensureNet(bounds, withView = true) {
   if (net && net.bounds.contains(bounds)) return net;
   const req = withView ? bounds.extend(map.getBounds()).pad(0.1) : bounds;
@@ -307,11 +329,21 @@ async function ensureNet(bounds, withView = true) {
   if (area > (withView ? 20 : 30)) throw new Error(`範圍太大（${area.toFixed(0)} km²），請把地圖放大一點`);
   const i0 = Math.floor(req.getSouth() / TILE), i1 = Math.floor(req.getNorth() / TILE), j0 = Math.floor(req.getWest() / TILE), j1 = Math.floor(req.getEast() / TILE);
   const b = L.latLngBounds([i0 * TILE, j0 * TILE], [(i1 + 1) * TILE, (j1 + 1) * TILE]);
-  const queue = [];
-  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) queue.push([i, j]);
-  const total = queue.length, parts = [];
+  // 雙北範圍內讀預先打包的檔案，範圍外才排進 Overpass 佇列
+  const pre = await preIndex(), preKeys = new Map(), queue = [];
+  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+    const la = (i + .5) * TILE, lo = (j + .5) * TILE;
+    if (!pre || la < pre.bbox[0] || la > pre.bbox[2] || lo < pre.bbox[1] || lo > pre.bbox[3]) { queue.push([i, j]); continue; }
+    const k = Math.floor(la / pre.tile) + '_' + Math.floor(lo / pre.tile);
+    if (pre.have.has(k)) (preKeys.get(k) || preKeys.set(k, []).get(k)).push([i, j]); // 不在清單上＝那一塊沒有路（山區、河）
+  }
+  const total = queue.length + preKeys.size, parts = [];
   let done = 0;
   setStatus(`下載路網資料中… 0/${total}`);
+  await Promise.all([...preKeys].map(async ([k, kids]) => {
+    try { parts.push(await preTile(k)); setStatus(`下載路網資料中… ${++done}/${total}`); }
+    catch (e) { queue.push(...kids); } // 讀不到就改用 Overpass
+  }));
   // 同時最多 2 個請求（Overpass 每個 IP 的並行上限）
   await Promise.all([0, 1].map(async () => {
     while (queue.length) {

@@ -7,3 +7,5 @@ __pycache__/
 routes/*.jpg
 routes/*.jpeg
 routes/*.png
+# 路網原始資料（Geofabrik PBF），只公開打包後的 net/
+cache/
