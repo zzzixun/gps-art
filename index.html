@@ -280,20 +280,54 @@ function hpop(h) {
   if (h.length) { h[0] = last; for (let i = 0; ;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < h.length && h[l][0] < h[m][0]) m = l; if (r < h.length && h[r][0] < h[m][0]) m = r; if (m === i) break; [h[i], h[m]] = [h[m], h[i]]; i = m; } }
   return top;
 }
+// 分塊下載：範圍切成 0.01°（約 1 km）的小塊，小請求比較不會逾時；下載過的塊存在 IndexedDB 30 天，換位置只補沒有的塊
+const TILE = 0.01;
+const tileDB = (() => { let p; return () => p || (p = new Promise(res => {
+  try { const r = indexedDB.open('gpsart-net', 1); r.onupgradeneeded = () => r.result.createObjectStore('tiles'); r.onsuccess = () => res(r.result); r.onerror = () => res(null); } catch (e) { res(null); }
+})); })();
+const tileGet = async key => { const db = await tileDB(); return db && new Promise(res => {
+  try { const q = db.transaction('tiles').objectStore('tiles').get(key); q.onsuccess = () => res(q.result && Date.now() - q.result.t < 30 * 864e5 ? q.result.els : null); q.onerror = () => res(null); } catch (e) { res(null); }
+}); };
+const tilePut = async (key, els) => { const db = await tileDB(); try { db && db.transaction('tiles', 'readwrite').objectStore('tiles').put({ t: Date.now(), els }, key); } catch (e) {} };
+// 每個請求最多等 40 秒；失敗就換下一個伺服器，整輪失敗再等一下重試
+async function overpass(q) {
+  for (let round = 0; round < 3; round++) {
+    for (const url of OVERPASS) {
+      const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 40000);
+      try { const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), signal: ctl.signal }); if (res.ok) return (await res.json()).elements; } catch (e) {} finally { clearTimeout(timer); }
+    }
+    await new Promise(r => setTimeout(r, 3000 * (round + 1)));
+  }
+  throw new Error('路網伺服器忙碌中，請稍後再試（已下載的區塊會保留，再按一次會接著下載）');
+}
 async function ensureNet(bounds, withView = true) {
   if (net && net.bounds.contains(bounds)) return net;
-  const b = (withView ? bounds.extend(map.getBounds()) : bounds).pad(0.1);
-  const area = b.getNorthWest().distanceTo(b.getNorthEast()) * b.getNorthWest().distanceTo(b.getSouthWest()) / 1e6;
+  const req = withView ? bounds.extend(map.getBounds()).pad(0.1) : bounds;
+  const area = req.getNorthWest().distanceTo(req.getNorthEast()) * req.getNorthWest().distanceTo(req.getSouthWest()) / 1e6;
   if (area > (withView ? 20 : 30)) throw new Error(`範圍太大（${area.toFixed(0)} km²），請把地圖放大一點`);
-  setStatus('下載路網資料中…（約 5–20 秒）');
-  const bb = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
-  const q = `[out:json][timeout:60];(way["highway"~"^(trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|service|pedestrian|footway|path|steps|cycleway|track)$"]["foot"!="no"]["access"!~"^(private|no)$"](${bb});node["highway"="traffic_signals"](${bb});node["crossing"="traffic_signals"](${bb}););out body;>;out skel qt;`;
-  let res = null;
-  for (const url of OVERPASS) {
-    try { res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q) }); if (res.ok) break; } catch (e) { res = null; }
-  }
-  if (!res || !res.ok) throw new Error('路網伺服器忙碌中，請稍後再試');
-  const els = (await res.json()).elements;
+  const i0 = Math.floor(req.getSouth() / TILE), i1 = Math.floor(req.getNorth() / TILE), j0 = Math.floor(req.getWest() / TILE), j1 = Math.floor(req.getEast() / TILE);
+  const b = L.latLngBounds([i0 * TILE, j0 * TILE], [(i1 + 1) * TILE, (j1 + 1) * TILE]);
+  const queue = [];
+  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) queue.push([i, j]);
+  const total = queue.length, parts = [];
+  let done = 0;
+  setStatus(`下載路網資料中… 0/${total}`);
+  // 同時最多 2 個請求（Overpass 每個 IP 的並行上限）
+  await Promise.all([0, 1].map(async () => {
+    while (queue.length) {
+      const [i, j] = queue.shift(), key = `${i}:${j}`;
+      let els = await tileGet(key);
+      if (!els) {
+        const bb = `${(i * TILE).toFixed(4)},${(j * TILE).toFixed(4)},${((i + 1) * TILE).toFixed(4)},${((j + 1) * TILE).toFixed(4)}`;
+        els = await overpass(`[out:json][timeout:60];(way["highway"~"^(trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|service|pedestrian|footway|path|steps|cycleway|track)$"]["foot"!="no"]["access"!~"^(private|no)$"](${bb});node["highway"="traffic_signals"](${bb});node["crossing"="traffic_signals"](${bb}););out body;>;out skel qt;`);
+        tilePut(key, els);
+      }
+      parts.push(els); setStatus(`下載路網資料中… ${++done}/${total}`);
+    }
+  }));
+  // 跨塊的道路會重複出現，用 id 去重
+  const seen = new Set(), els = [];
+  for (const part of parts) for (const e of part) { const k = e.type[0] + e.id; if (!seen.has(k)) { seen.add(k); els.push(e); } }
   const o = b.getCenter(), kx = mLng(o.lat);
   const xy = (lat, lng) => [(lng - o.lng) * kx, (lat - o.lat) * M_LAT];
   const pos = new Map(), sig = new Set();
@@ -1020,19 +1054,9 @@ function scoreRoute(R, Ts, size) {
   return { score: (miss + wander) / 2 / size * 100 + 20 * (1 - kept) + 10 * Math.max(0, rl / tl - thr), miss, wander, kept, km: rl / 1000 };
 }
 
-$('auto').onclick = async () => {
-  if (!tplCenter) return setStatus('先點地圖（或按 ◎）設定範圍中心');
-  const strokes = curStrokes();
-  if (!strokes.length) return setStatus('畫板上還沒有圖案');
-  const R = $('arad').value * 1000, D = $('adist').value * 1000;
-  try { await ensureNet(L.latLngBounds(offset(tplCenter, -R, -R), offset(tplCenter, R, R)), false); } catch (e) { return setStatus(e.message); }
-  const t0 = performance.now(), [ox, oy] = net.xy(tplCenter.lat, tplCenter.lng), multi = strokes.length > 1;
-  // 圖案大小：路線長度約為圖案總長的 1.15 倍（沿街道的鋸齒），多筆再加連接段
-  const lines = strokes.map(strokeLine), ru = Math.max(...lines.flat().map(([u, v]) => Math.hypot(u, v)));
-  let size = 2 * D / ((multi ? 1.3 : 1.15) * lines.reduce((s, l) => s + polyLen(l), 0)), shrunk = false;
-  if (ru * size / 2 > 0.75 * R) { size = 1.5 * R / ru; shrunk = true; } // 留四分之一半徑讓圖案有地方移動
-  // 粗搜：圖案完整落在圓圈內的所有擺法
-  setStatus('搜尋位置中…'); await new Promise(r => setTimeout(r, 30));
+// 一輪搜尋：固定圖案大小（±10%），粗搜圓圈內的擺法，前 8 名實際沿街道找路、接成一條、評分
+async function autoPass(strokes, size, R, ox, oy, label) {
+  const lines = strokes.map(strokeLine), ru = Math.max(...lines.flat().map(([u, v]) => Math.hypot(u, v))), multi = strokes.length > 1;
   const cands = [];
   for (const sc of [0.9, 1, 1.1]) {
     const sz = size * sc, step = Math.max(50, sz / 15), pts = lines.flatMap(l => resampleXY(l, 30 / (sz / 2))), lim = R - ru * sz / 2;
@@ -1046,17 +1070,15 @@ $('auto').onclick = async () => {
       }
     }
   }
-  if (!cands.length) return setStatus('範圍太小放不下這個圖案，請把半徑調大');
   cands.sort((a, b) => a[0] - b[0]);
   const seeds = [];
   for (const c of cands) {
     if (seeds.some(q => Math.hypot(q[1] - c[1], q[2] - c[2]) < c[3] / 4 && Math.abs(q[4] - c[4]) < 30)) continue;
     seeds.push(c); if (seeds.length === 8) break;
   }
-  // 前 8 名實際沿街道找路、接成一條、評分
   const res = [];
   for (const [i, [, cx, cy, sz, rot]] of seeds.entries()) {
-    setStatus(`沿街道找路中… ${i + 1}/${seeds.length}`); await new Promise(r => setTimeout(r, 0));
+    setStatus(`${label}沿街道找路中… ${i + 1}/${seeds.length}`); await new Promise(r => setTimeout(r, 0));
     const Ts = strokes.map(s => ({ T: tplXY(s.pts, cx, cy, sz, rot, s.closed), closed: s.closed }));
     const paths = Ts.map(({ T, closed }) => ({ p: shapeRoute(T, closed), closed })).filter(q => q.p);
     if (!paths.length || !paths.some(q => q.closed === strokes[0].closed)) continue;
@@ -1065,19 +1087,49 @@ $('auto').onclick = async () => {
     const s = scoreRoute(coords.map(([a, b]) => net.xy(a, b)), Ts, sz);
     if (s) res.push({ ...s, Ts, coords, size: sz });
   }
-  res.sort((a, b) => a.score - b.score);
-  autoCands = res.slice(0, 3);
+  return { res, n: cands.length };
+}
+
+$('auto').onclick = async () => {
+  if (!tplCenter) return setStatus('先點地圖（或按 ◎）設定範圍中心');
+  const strokes = curStrokes();
+  if (!strokes.length) return setStatus('畫板上還沒有圖案');
+  const R = $('arad').value * 1000, D = $('adist').value * 1000;
+  try { await ensureNet(L.latLngBounds(offset(tplCenter, -R - 150, -R - 150), offset(tplCenter, R + 150, R + 150)), false); } catch (e) { return setStatus(e.message); }
+  const t0 = performance.now(), [ox, oy] = net.xy(tplCenter.lat, tplCenter.lng);
+  const lines = strokes.map(strokeLine), ru = Math.max(...lines.flat().map(([u, v]) => Math.hypot(u, v)));
+  const maxSize = 1.5 * R / ru; // 圖案半徑最多佔範圍的 75%，留空間讓它移動
+  // 第一輪：用經驗值估大小（路線約為圖案總長的 1.15 倍，多筆再加連接段）
+  let size = Math.min(maxSize, 2 * D / ((strokes.length > 1 ? 1.3 : 1.15) * lines.reduce((s, l) => s + polyLen(l), 0)));
+  const p1 = await autoPass(strokes, size, R, ox, oy, '第 1 輪：');
+  const all = [...p1.res];
+  // 第二輪：實際路線長度和預估常差很多（繞路、連接段），用第一輪的實際「路線長 ÷ 圖寬」校正大小再找一次
+  const perSize = p1.res.map(r => r.km * 1000 / r.size).sort((a, b) => a - b)[p1.res.length >> 1];
+  if (perSize && !p1.res.some(r => Math.abs(r.km * 1000 - D) / D < 0.1)) {
+    const size2 = Math.min(maxSize, D / perSize);
+    if (Math.abs(size2 - size) / size > 0.05) all.push(...(await autoPass(strokes, size2, R, ox, oy, '第 2 輪：')).res);
+  }
+  // 距離和目標差超過 10% 就扣分
+  all.forEach(r => { r.dev = (r.km * 1000 - D) / D; r.total = r.score + 30 * Math.max(0, Math.abs(r.dev) - 0.1); });
+  all.sort((a, b) => a.total - b.total);
+  autoCands = [];
+  for (const r of all) { // 兩輪可能找到同一個地方，去掉重複
+    if (autoCands.some(q => Math.hypot(...[0, 1].map(k => q.coords[0][k] - r.coords[0][k])) < 0.002 && Math.abs(q.km - r.km) < 0.5)) continue;
+    autoCands.push(r); if (autoCands.length === 3) break;
+  }
   const COLORS = ['#2b8a3e', '#1c7ed6', '#ae3ec9'];
   autoLayer.clearLayers(); candLayer.clearLayers(); previewLine.setLatLngs([]);
   autoCands.forEach((r, i) => {
     L.polyline(r.Ts.map(({ T }) => T.map(([x, y]) => net.ll(x, y))), { color: COLORS[i], weight: 1.5, dashArray: '4 6', interactive: false }).addTo(autoLayer);
     L.polyline(r.coords, { color: COLORS[i], weight: 4, opacity: .8 }).addTo(autoLayer).on('click', () => applyAuto(i));
   });
-  $('autores').innerHTML = autoCands.map((r, i) => `<div class="hot ok" data-auto="${i}" style="border-left:4px solid ${COLORS[i]}">${thumb(r.coords)}<div><b>第 ${i + 1} 名・${r.km.toFixed(1)} km</b>` +
+  const devText = r => Math.abs(r.dev) < 0.05 ? '剛好' : `比目標${r.dev > 0 ? '多' : '少'} ${Math.abs(r.km - D / 1000).toFixed(1)} km`;
+  $('autores').innerHTML = autoCands.map((r, i) => `<div class="hot ok" data-auto="${i}" style="border-left:4px solid ${COLORS[i]}">${thumb(r.coords)}<div><b>第 ${i + 1} 名・${r.km.toFixed(1)} km（${devText(r)}）</b>` +
     `<span>寬 ${(r.size / 1000).toFixed(1)} km・漏畫 ${r.miss.toFixed(0)} m・亂繞 ${r.wander.toFixed(0)} m・尖角 ${Math.round(r.kept * 100)}%</span><br><small>點這裡套用</small></div></div>`).join('');
   if (autoCands.length) map.fitBounds(autoLayer.getLayers().reduce((b, l) => b.extend(l.getBounds()), L.latLngBounds([])), { padding: [30, 30] });
-  setStatus(autoCands.length ? `比對 ${cands.length.toLocaleString()} 種擺法、實際找路 ${seeds.length} 個（${((performance.now() - t0) / 1000).toFixed(1)} 秒）` +
-    (shrunk ? '。範圍放不下這個距離，已縮小圖案' : '') : '找不到可跑的路線，換個中心或把半徑調大試試');
+  const tooBig = autoCands.length && autoCands[0].dev < -0.1 && autoCands[0].size > 0.95 * maxSize;
+  setStatus(autoCands.length ? `找到 ${autoCands.length} 條（${((performance.now() - t0) / 1000).toFixed(1)} 秒）` +
+    (tooBig ? '。範圍放不下這個距離，把半徑調大或換個中心點試試' : '') : '找不到可跑的路線，換個中心或把半徑調大試試');
 };
 function applyAuto(i) {
   const r = autoCands[i]; if (!r) return;
