@@ -159,6 +159,9 @@
       <div class="hint">雙北實跑過的 GPS Art 路線，點卡片直接載入，再到「導航」分頁開跑。</div>
       <div class="row" style="margin-bottom:8px"><button class="btn" id="hotsort">📍 依離我的距離排序</button></div>
       <div id="hotlist"></div>
+      <label>🤖 全大台北最像的位置（演算法推薦）</label>
+      <div class="hint">每個內建圖案在雙北掃過 132 個地點、取最像的前 3 名（約 10 km）。點卡片載入第 1 名，或點下面的 #2、#3。</div>
+      <div id="reclist"></div>
       <label>匯入 GPX 檔</label>
       <input type="file" id="gpxfile" accept=".gpx,application/gpx+xml">
     </section>
@@ -201,6 +204,7 @@
 <script src="vendor/leaflet/leaflet.js"></script>
 <script src="vendor/leaflet/leaflet-rotate.js"></script>
 <script src="routes.js"></script>
+<script src="recommended.js"></script>
 <script>
 if (!window.L) document.getElementById('map').innerHTML = '<p style="padding:24px;color:#c92a2a">⚠ 地圖套件沒有載入：請確認 vendor/leaflet 資料夾和 index.html 放在一起。</p>';
 // ===== 基本設定 =====
@@ -1286,6 +1290,16 @@ $('hotlist').onclick = e => {
   if (e.target.closest('a')) return;
   const card = e.target.closest('.hot.ok'); if (!card) return;
   const r = HOT.find(r => r.id === card.dataset.id); loadCoords(ROUTES[r.id], r.name);
+};
+
+// 演算法推薦：同一個圖案的 3 個位置放在同一張卡片
+const REC = window.RECOMMENDED || [];
+const recBtn = (r, i) => `<a href="#" data-rec="${i}">#${r.rank} ${r.area.replace(/^(臺北市|新北市)/, '')}・${lenKm(r.c).toFixed(1)} km</a>`;
+$('reclist').innerHTML = REC.map((r, i) => r.rank !== 1 ? '' : `<div class="hot ok" data-rec="${i}">${thumb(r.c)}<div><b>${r.k}</b>` +
+  `<span>${r.area}</span><br>${REC.map((q, j) => q.k === r.k ? recBtn(q, j) : '').join('')}</div></div>`).join('');
+$('reclist').onclick = e => {
+  const el = e.target.closest('[data-rec]'); if (!el) return;
+  e.preventDefault(); const r = REC[+el.dataset.rec]; loadCoords(r.c, `${r.k} #${r.rank}（${r.area}）`);
 };
 
 // ===== 最少重複跑法（中國郵差問題）=====

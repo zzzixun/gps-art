@@ -32,7 +32,7 @@ GPS Art 是指用跑步軌跡在地圖上畫出圖案，在 Strava 上很流行�
 | 指定範圍自動生成 | 點一個地點（或用目前位置）、選半徑、選圖案和想跑的距離，程式在範圍內自動找出最像的三條路線，點一下就套用 |
 | 手繪畫板 | 在畫板上一筆一筆畫（外框、眼睛、嘴巴…），有橡皮擦和多步復原；自動生成會把每一筆都沿街道描出來，再接成一條重複最少的路線 |
 | 像素 | 在 8×8 格子上畫像素圖，程式依街道角度與街區大小展開成方格路線 |
-| 熱門 | 17 條雙北實跑路線，點一下就載入，可依離我的距離排序 |
+| 熱門 | 17 條雙北實跑路線，點一下就載入，可依離我的距離排序；另有 17 個內建圖案在全大台北最像的前 3 個位置（[city-shapes](https://github.com/zzzixun/city-shapes) 掃描 132 個地點的結果） |
 | 調整路線 | 拖曳控制點只重算它前後兩段；點路線可以加點，點控制點可以刪除，也能復原 |
 | 最少重複跑法 | 圖案的每段線都保留，重新排出重複路段最少的跑法，並用每公里標號顯示跑的順序 |
 | 智慧重排 | 跑步時記錄圖案哪些地方真的跑過；繞路、反方向或跳到別段時，從你目前的位置和方向，重新把還沒跑的部分排成最短的一筆畫（一圈的路線你往哪邊跑就順著哪邊排） |
@@ -72,6 +72,7 @@ GPS Art 是指用跑步軌跡在地圖上畫出圖案，在 Strava 上很流行�
 - 手機：開啟 https://zzzixun.github.io/gps-art/ 並允許定位。定位需要 HTTPS，所以要從這個網址開。
 - 電腦：直接用瀏覽器開啟 `index.html`。
 - 新增熱門路線：把 GPX 或 KML 放進 `routes/`，執行 `python build_routes.py`。
+- 更新演算法推薦：在 city-shapes 跑完掃描後執行 `python build_recommended.py ../06-city-shapes/out/scan/best.json`，產生 `recommended.js`。
 - 更新雙北路網：下載 [taiwan-latest.osm.pbf](https://download.geofabrik.de/asia/taiwan-latest.osm.pbf) 到 `cache/`，`pip install osmium` 後執行 `python build_net.py`。
 
 ## 已知限制與下一步

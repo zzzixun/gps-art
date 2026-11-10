@@ -55,18 +55,23 @@ def simplify(pts, tol):
     return [pts[i] for i in sorted(keep)]
 
 
-routes = {}
-for f in sorted((HERE / "routes").iterdir()):
-    if f.suffix.lower() not in (".gpx", ".kml"):
-        continue
-    pts = read_gpx(f) if f.suffix.lower() == ".gpx" else read_kml(f)
-    if len(pts) < 2:
-        print(f"跳過 {f.name}：沒有軌跡點")
-        continue
-    small = simplify(pts, TOLERANCE_M)
-    routes[f.stem] = [[round(a, 6), round(b, 6)] for a, b in small]
-    print(f"{f.stem}: {len(pts)} -> {len(small)} 點")
+def main():
+    routes = {}
+    for f in sorted((HERE / "routes").iterdir()):
+        if f.suffix.lower() not in (".gpx", ".kml"):
+            continue
+        pts = read_gpx(f) if f.suffix.lower() == ".gpx" else read_kml(f)
+        if len(pts) < 2:
+            print(f"跳過 {f.name}：沒有軌跡點")
+            continue
+        small = simplify(pts, TOLERANCE_M)
+        routes[f.stem] = [[round(a, 6), round(b, 6)] for a, b in small]
+        print(f"{f.stem}: {len(pts)} -> {len(small)} 點")
 
-(HERE / "routes.js").write_text(
-    "window.ROUTES = " + json.dumps(routes, separators=(",", ":")) + ";\n", encoding="utf-8")
-print(f"已寫入 routes.js（{len(routes)} 條路線）")
+    (HERE / "routes.js").write_text(
+        "window.ROUTES = " + json.dumps(routes, separators=(",", ":")) + ";\n", encoding="utf-8")
+    print(f"已寫入 routes.js（{len(routes)} 條路線）")
+
+
+if __name__ == "__main__":
+    main()
