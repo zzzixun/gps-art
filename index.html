@@ -1123,24 +1123,27 @@ function shapeRoute(T, closed) {
   for (const k of path) { if (out.length >= 2 && out.at(-2) === k) out.pop(); else out.push(k); }
   return out.length > 1 ? out : null;
 }
-// 多筆接成一條：從最長的一筆開始，每次接到最近的下一筆（一圈的筆畫可以從任何一點進入）。
-// 連接段優先走已經畫過的街道（成本 ×0.3），少畫出多餘的線
-function assemble(paths) {
-  const { N } = net, on = new Set(paths.flatMap(q => q.p));
-  const conW = (v, u, len) => len * (on.has(v) && on.has(u) ? 0.3 : 1);
+// 多筆接成一條：從最長的一筆開始，每次接離「已經畫好的部分」最近的下一筆（一圈的筆畫可以從任何一點進入）。
+// 連接段會在圖上多出一條線，所以盡量藏起來：沿已經畫過的街道折返很便宜（×0.2，重複跑沒關係），
+// 沿圖案線條走的成本正常，離開圖案越遠越貴（最多 ×31）→ 只在最短的地方「搭橋」過去
+function assemble(paths, Ts) {
+  const { N } = net, on = new Set(paths.flatMap(q => q.p)), nd = new Float32Array(N.length).fill(-1);
+  const dT = i => nd[i] >= 0 ? nd[i] : (nd[i] = Math.min(...Ts.map(T => distToPoly(N[i].xy[0], N[i].xy[1], T))));
+  const conW = (v, u, len) => len * (on.has(v) && on.has(u) ? 0.2 : 1 + Math.min(((dT(v) + dT(u)) / 2 / 25) ** 2, 30));
   const rest = [...paths].sort((a, b) => b.p.length - a.p.length), seq = [...rest.shift().p];
   while (rest.length) {
-    const [cx, cy] = N[seq.at(-1)].xy;
+    const done = seq.filter((_, i) => i % 3 === 0).map(k => N[k].xy); // 已畫好的部分（取樣）
     let best = null;
     rest.forEach((q, qi) => (q.closed ? q.p.map((_, i) => i) : [0, q.p.length - 1]).forEach(i => {
-      const d = Math.hypot(N[q.p[i]].xy[0] - cx, N[q.p[i]].xy[1] - cy);
+      const [x, y] = N[q.p[i]].xy;
+      let d = Infinity; for (const [a, b] of done) d = Math.min(d, (a - x) ** 2 + (b - y) ** 2);
       if (!best || d < best.d) best = { d, qi, i };
     }));
     const q = rest.splice(best.qi, 1)[0];
     let p = q.p;
     if (q.closed) { const body = p[0] === p.at(-1) ? p.slice(0, -1) : p; p = [...body.slice(best.i), ...body.slice(0, best.i), body[best.i]]; }
     else if (best.i) p = [...p].reverse();
-    const c = astarNet(seq.at(-1), p[0], conW, 0.3, 80000);
+    const c = astarNet(seq.at(-1), p[0], conW, 0.2, 150000);
     if (!c) continue; // 接不過去就放棄這一筆
     seq.push(...c.slice(1), ...p.slice(1));
   }
@@ -1193,7 +1196,7 @@ async function autoPass(strokes, size, R, ox, oy, label) {
     const Ts = strokes.map(s => ({ T: tplXY(s.pts, cx, cy, sz, rot, s.closed), closed: s.closed }));
     const paths = Ts.map(({ T, closed }) => ({ p: shapeRoute(T, closed), closed })).filter(q => q.p);
     if (!paths.length || !paths.some(q => q.closed === strokes[0].closed)) continue;
-    let coords = assemble(paths).map(k => [net.N[k].lat, net.N[k].lng]);
+    let coords = assemble(paths, Ts.map(t => t.T)).map(k => [net.N[k].lat, net.N[k].lng]);
     if (multi) { const o = optimizeRoute(coords, false); if (o.after < o.before - 30) coords = o.coords; } // 重排成重複最少的一筆畫
     const s = scoreRoute(coords.map(([a, b]) => net.xy(a, b)), Ts, sz);
     if (s) res.push({ ...s, Ts, coords, size: sz });
