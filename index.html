@@ -130,12 +130,15 @@
       <div class="row"><button class="btn blue" id="tplfind">🔍 在目前畫面裡找最像的位置</button></div>
       <div id="tplres"></div>
       <label style="margin-top:14px">✨ 指定範圍自動生成</label>
-      <div class="hint">點地圖（或按 ◎）設定範圍中心，選好圖案和想跑的距離，程式會在藍色圓圈內找出最像的路線。</div>
+      <div class="hint">點地圖（或按 ◎）設定範圍中心，選好圖案，程式會在藍色圓圈內找出最像的路線。</div>
       <div class="row"><button class="btn" id="aloc">◎ 用我的位置當中心</button></div>
       <label>範圍半徑 <small id="v-arad">2.0 km</small></label>
       <input type="range" id="arad" min="0.8" max="2" step="0.1" value="2">
-      <label>想跑的距離 <small id="v-adist">10 km</small></label>
-      <input type="range" id="adist" min="3" max="20" step="1" value="10">
+      <label style="margin:6px 0 0;font-size:13px"><input type="checkbox" id="anydist" checked> 不管距離，只求最像（圖案大小也自動找）</label>
+      <div id="distbox" style="display:none">
+        <label>想跑的距離 <small id="v-adist">10 km</small></label>
+        <input type="range" id="adist" min="3" max="20" step="1" value="10">
+      </div>
       <div class="row"><button class="btn pri" id="auto">✨ 自動生成</button></div>
       <div id="autores"></div>
     </section>
@@ -272,7 +275,9 @@ async function routeMany(points) {
 }
 
 // ===== 路網資料（OpenStreetMap Overpass）：「避開大馬路」與「找最像的位置」共用 =====
-const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter']; // 主站忙碌時改用鏡像站
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter', 'https://overpass.kumi.systems/api/interpreter']; // 公用伺服器常忙碌，輪流用鏡像站
+let opNext = 0; // 下一個請求從哪個伺服器開始，分散負載
 // 避開模式下每公尺的成本倍率；沒列到的道路 = 1
 const ROAD_COST = { trunk: 4, trunk_link: 4, primary: 3, primary_link: 3, secondary: 2, secondary_link: 2, tertiary: 1.3, tertiary_link: 1.3,
   steps: 1.5, footway: .85, path: .85, pedestrian: .85, cycleway: .9, track: .9, living_street: .9 };
@@ -293,11 +298,12 @@ const tileGet = async key => { const db = await tileDB(); return db && new Promi
   try { const q = db.transaction('tiles').objectStore('tiles').get(key); q.onsuccess = () => res(q.result && Date.now() - q.result.t < 30 * 864e5 ? q.result.els : null); q.onerror = () => res(null); } catch (e) { res(null); }
 }); };
 const tilePut = async (key, els) => { const db = await tileDB(); try { db && db.transaction('tiles', 'readwrite').objectStore('tiles').put({ t: Date.now(), els }, key); } catch (e) {} };
-// 每個請求最多等 40 秒；失敗就換下一個伺服器，整輪失敗再等一下重試
+// 每個請求最多等 30 秒；失敗就換下一個伺服器，整輪失敗再等一下重試
 async function overpass(q) {
+  const start = opNext++ % OVERPASS.length;
   for (let round = 0; round < 3; round++) {
-    for (const url of OVERPASS) {
-      const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 40000);
+    for (let n = 0; n < OVERPASS.length; n++) {
+      const url = OVERPASS[(start + n) % OVERPASS.length], ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 30000);
       try { const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), signal: ctl.signal }); if (res.ok) return (await res.json()).elements; } catch (e) {} finally { clearTimeout(timer); }
     }
     await new Promise(r => setTimeout(r, 3000 * (round + 1)));
@@ -853,12 +859,21 @@ const TEMPLATES = {
   '☁️ 雲': [[0.82,-0],[0.96,-0.14],[1,-0.34],[0.91,-0.52],[0.73,-0.61],[-0.67,-0.64],[-0.88,-0.53],[-1,-0.3],[-0.94,-0.03],[-0.84,0.09],[-0.68,0.16],[-0.65,0.31],[-0.56,0.46],[-0.43,0.57],[-0.25,0.64],[0.03,0.6],[0.23,0.45],[0.41,0.47],[0.59,0.41],[0.76,0.24]],
   '🍎 蘋果': { s: [[[[0,-0.82],[-0.22,-0.91],[-0.44,-0.92],[-0.66,-0.85],[-0.83,-0.71],[-0.95,-0.52],[-1,-0.3],[-0.97,-0.08],[-0.89,0.09],[-0.68,0.29],[-0.41,0.38],[-0.19,0.36],[0,0.28],[0.19,0.36],[0.41,0.38],[0.71,0.27],[0.89,0.09],[0.99,-0.14],[0.99,-0.4],[0.89,-0.63],[0.71,-0.81],[0.51,-0.9],[0.28,-0.92]], true], [[[0,0.38],[0.05,0.71],[0.16,0.92]], false], [[[0.68,0.85],[0.65,0.74],[0.49,0.62],[0.3,0.57],[0.19,0.62],[0.22,0.74],[0.38,0.86],[0.57,0.9]], true]] },
   '🎄 聖誕樹': [[-0.15,-1],[-0.15,-0.59],[-0.87,-0.59],[-0.27,-0.13],[-0.67,-0.13],[-0.21,0.33],[-0.46,0.33],[0,1],[0.46,0.33],[0.21,0.33],[0.67,-0.13],[0.27,-0.13],[0.87,-0.59],[0.15,-0.59],[0.15,-1]],
+  // 整隻動物（側面全身）
+  '🐈 坐著的貓': { s: [[[[-0.13,-0.9],[-0.21,-0.82],[-0.23,-0.9],[-0.3,-0.94],[-0.74,-0.81],[-0.87,-0.39],[-0.87,-0.32],[-0.69,-0.02],[-0.63,-0.0],[-0.57,-0.02],[-0.53,-0.13],[-0.68,-0.38],[-0.6,-0.66],[-0.26,-0.76],[-0.35,-0.5],[-0.33,-0.22],[-0.25,-0.07],[-0.14,0.06],[-0.0,0.14],[0.15,0.17],[0.12,0.39],[0.17,0.53],[0.26,0.63],[0.28,0.97],[0.47,0.71],[0.57,0.7],[0.81,1.0],[0.84,0.6],[0.71,0.64],[0.85,0.48],[0.87,0.26],[0.77,0.06],[0.59,-0.04],[0.7,-0.33],[0.7,-0.5],[0.65,-0.68],[0.71,-1.0],[-0.14,-1.0]],true],[[[0.72,0.36],[0.69,0.29],[0.61,0.26],[0.54,0.29],[0.51,0.36],[0.54,0.44],[0.61,0.47],[0.69,0.44]],true]] },
+  '🐇 兔子全身': { s: [[[[0.52,-0.91],[0.42,-0.97],[0.2,-1.0],[-0.3,-0.9],[-0.52,-0.76],[-0.64,-0.55],[-0.77,-0.48],[-0.8,-0.38],[-0.74,-0.26],[-0.6,-0.22],[-0.5,-0.09],[-0.33,0.02],[-0.1,0.08],[0.14,0.05],[0.21,0.22],[0.34,0.33],[0.17,0.65],[0.13,0.81],[0.13,0.92],[0.18,0.95],[0.25,0.9],[0.41,0.65],[0.47,0.91],[0.56,1.0],[0.61,0.93],[0.64,0.75],[0.58,0.34],[0.74,0.22],[0.8,0.03],[0.73,-0.18],[0.55,-0.29],[0.57,-0.44],[0.56,-0.56],[0.49,-0.7],[0.38,-0.81],[0.49,-0.85]],true],[[[0.65,0.1],[0.62,0.03],[0.55,0.01],[0.49,0.03],[0.46,0.1],[0.49,0.16],[0.55,0.19],[0.62,0.16]],true]] },
+  '🦆 小鴨': { s: [[[[0.7,-0.35],[0.66,-0.46],[0.54,-0.57],[0.23,-0.7],[-0.2,-0.74],[-0.58,-0.67],[-0.79,-0.57],[-0.93,-0.41],[-0.95,-0.29],[-0.9,-0.16],[-1.0,0.23],[-0.75,-0.02],[-0.4,0.11],[0.05,0.12],[-0.05,0.34],[-0.04,0.47],[0.01,0.58],[0.19,0.72],[0.32,0.75],[0.44,0.72],[0.55,0.66],[0.64,0.57],[0.68,0.45],[0.68,0.32],[1.0,0.28],[1.0,0.16],[0.63,0.18],[0.54,0.08],[0.43,0.02],[0.64,-0.14],[0.7,-0.24]],true],[[[0.47,0.47],[0.45,0.41],[0.39,0.39],[0.32,0.41],[0.3,0.47],[0.32,0.54],[0.39,0.56],[0.45,0.54]],true],[[[-0.61,-0.06],[-0.22,-0.45],[0.12,-0.06]],false]] },
+  '🐘 大象': { s: [[[[-0.49,-0.54],[-0.73,-0.54],[-0.73,-0.06],[-0.7,-0.06],[-0.81,0.09],[-0.82,0.25],[-0.95,0.02],[-1.0,0.03],[-0.83,0.35],[-0.78,0.34],[-0.57,0.51],[-0.32,0.58],[-0.04,0.58],[0.18,0.51],[0.3,0.61],[0.45,0.64],[0.57,0.61],[0.67,0.54],[0.73,0.43],[0.75,0.3],[0.9,-0.08],[0.89,-0.4],[0.99,-0.51],[0.97,-0.61],[0.87,-0.63],[0.7,-0.49],[0.71,-0.12],[0.63,0.09],[0.51,0.03],[0.39,0.02],[0.24,-0.11],[0.24,-0.54],[-0.0,-0.54],[-0.0,-0.2],[-0.26,-0.22],[-0.49,-0.18]],true],[[[0.49,0.33],[0.44,0.18],[0.32,0.12],[0.2,0.18],[0.16,0.33],[0.2,0.48],[0.32,0.54],[0.44,0.48]],true],[[[0.6,0.44],[0.53,0.37],[0.47,0.44],[0.53,0.5]],true]] },
+  '🐋 鯨魚': { s: [[[[1.0,-0.34],[0.95,-0.45],[0.83,-0.57],[0.49,-0.72],[0.03,-0.76],[-0.37,-0.68],[-0.59,-0.57],[-0.73,-0.43],[-0.76,-0.32],[-0.75,-0.22],[-0.95,0.03],[-0.95,0.09],[-0.91,0.12],[-1.0,0.35],[-0.77,0.18],[-0.65,0.32],[-0.76,0.08],[-0.8,0.07],[-0.67,-0.09],[-0.47,0.06],[-0.22,0.14],[0.07,0.18],[0.37,0.16],[0.64,0.08],[0.85,-0.03],[0.97,-0.18]],true],[[[0.81,-0.15],[0.78,-0.23],[0.71,-0.26],[0.63,-0.23],[0.6,-0.15],[0.63,-0.08],[0.71,-0.05],[0.78,-0.08]],true],[[[0.47,0.18],[0.47,0.59]],false],[[[0.47,0.59],[0.44,0.68],[0.37,0.75],[0.28,0.76],[0.19,0.73],[0.13,0.65]],false],[[[0.47,0.59],[0.5,0.68],[0.57,0.75],[0.67,0.76],[0.76,0.73],[0.81,0.65]],false]] },
+  '🐌 蝸牛': { s: [[[[1.0,-0.44],[0.88,-0.68],[-1.0,-0.68],[-0.44,-0.56],[-0.61,-0.45],[-0.75,-0.28],[-0.81,-0.1],[-0.82,0.12],[-0.76,0.31],[-0.63,0.49],[-0.45,0.61],[-0.24,0.67],[-0.05,0.66],[0.16,0.58],[0.3,0.46],[0.41,0.31],[0.46,0.12],[0.46,-0.07],[0.41,-0.25],[0.29,-0.42],[0.47,-0.38],[0.6,0.04],[0.54,0.08],[0.55,0.58],[0.59,0.61],[0.63,0.57],[0.64,0.17],[0.65,0.21],[0.67,0.13],[0.78,0.57],[0.81,0.6],[0.86,0.59],[0.87,0.55],[0.75,0.08],[0.7,0.04],[0.82,-0.38]],true],[[[0.0,0.03],[-0.02,0.15],[-0.12,0.25],[-0.27,0.26],[-0.35,0.22],[-0.45,0.09],[-0.47,-0.01],[-0.4,-0.19],[-0.22,-0.31],[0.0,-0.29],[0.1,-0.22],[0.18,-0.12],[0.22,-0.0],[0.22,0.13],[0.18,0.26],[0.09,0.37],[-0.03,0.45],[-0.17,0.49],[-0.32,0.48]],false]] },
+  '🐢 烏龜': { s: [[[[-0.36,-0.48],[-0.6,-0.48],[-0.6,-0.28],[-1.0,-0.28],[-0.8,-0.18],[-0.8,-0.13],[-0.67,-0.13],[-0.65,0.04],[-0.57,0.21],[-0.45,0.34],[-0.27,0.44],[0.03,0.47],[0.31,0.36],[0.48,0.16],[0.55,-0.13],[0.62,-0.13],[0.57,-0.07],[0.57,-0.01],[0.69,0.1],[0.88,0.1],[0.99,0.0],[0.99,-0.08],[0.92,-0.15],[0.8,-0.18],[0.68,-0.17],[0.68,-0.28],[0.49,-0.28],[0.49,-0.48],[0.24,-0.48],[0.24,-0.28],[-0.36,-0.28]],true],[[[-0.65,-0.13],[-0.41,0.26],[-0.06,0.41],[0.29,0.26],[0.53,-0.13]],false],[[[0.89,0.01],[0.87,-0.04],[0.81,-0.06],[0.76,-0.04],[0.73,0.01],[0.76,0.07],[0.81,0.09],[0.87,0.07]],true]] },
+  '🐧 企鵝': { s: [[[[-0.0,-0.92],[-0.06,-0.97],[-0.17,-1.0],[-0.4,-0.96],[-0.43,-0.92],[-0.41,-0.88],[-0.25,-0.83],[-0.41,-0.64],[-0.52,-0.35],[-0.67,-0.52],[-0.72,-0.49],[-0.74,-0.4],[-0.7,-0.17],[-0.61,0.08],[-0.52,0.22],[-0.42,0.29],[-0.32,0.43],[-0.37,0.61],[-0.33,0.8],[-0.19,0.95],[0.0,1.0],[0.19,0.95],[0.33,0.8],[0.37,0.61],[0.32,0.43],[0.42,0.29],[0.52,0.22],[0.61,0.08],[0.7,-0.17],[0.74,-0.4],[0.72,-0.49],[0.67,-0.52],[0.52,-0.35],[0.41,-0.64],[0.25,-0.83],[0.41,-0.88],[0.43,-0.92],[0.4,-0.96],[0.17,-1.0],[0.06,-0.97]],true],[[[0.34,-0.28],[0.28,-0.57],[0.13,-0.77],[0.03,-0.81],[-0.07,-0.8],[-0.24,-0.65],[-0.33,-0.43],[-0.33,-0.17],[-0.26,0.06],[-0.13,0.21],[0.03,0.25],[0.19,0.17],[0.3,-0.03]],true],[[[-0.03,0.68],[-0.07,0.6],[-0.15,0.56],[-0.23,0.6],[-0.27,0.68],[-0.23,0.76],[-0.15,0.8],[-0.07,0.76]],true],[[[0.27,0.68],[0.23,0.6],[0.15,0.56],[0.07,0.6],[0.03,0.68],[0.07,0.76],[0.15,0.8],[0.23,0.76]],true]] },
 };
 let tplCenter = null, tplSize = 2000, tplRot = 0;
 Object.keys(TEMPLATES).forEach(k => $('tplsel').add(new Option(k, k)));
 $('tplsel').add(new Option('✏️ 自己畫（畫板，可畫多筆）', 'pad'));
 // 臉、動物、房子等要保持正立，自動生成只轉 ±15°；其他圖案可以轉 ±45°
-const UPRIGHT = new Set(['🐕 臘腸狗', '🏠 房子', '👻 小鬼', '🐱 貓咪', '😊 笑臉', '🐻 熊', '🐰 兔子', '🍎 蘋果', '🎄 聖誕樹', '⚡ 閃電', 'pad']);
+const UPRIGHT = new Set(['🐕 臘腸狗', '🏠 房子', '👻 小鬼', '🐱 貓咪', '😊 笑臉', '🐻 熊', '🐰 兔子', '🍎 蘋果', '🎄 聖誕樹', '⚡ 閃電', '🐈 坐著的貓', '🐇 兔子全身', '🦆 小鴨', '🐘 大象', '🐋 鯨魚', '🐌 蝸牛', '🐢 烏龜', '🐧 企鵝', 'pad']);
 const multiTpl = () => $('tplsel').value === 'pad' || !Array.isArray(TEMPLATES[$('tplsel').value]); // 多筆畫只能用自動生成
 
 // ===== 手繪畫板：一筆一筆畫，外框＋眼睛、嘴巴等細節 =====
@@ -1039,6 +1054,7 @@ function drawArea() {
 }
 bindRange('arad', v => v.toFixed(1) + ' km', drawArea);
 bindRange('adist', v => v + ' km', () => {});
+$('anydist').onchange = () => { $('distbox').style.display = $('anydist').checked ? 'none' : ''; };
 $('aloc').onclick = () => withMyPos(p => { tplCenter = p; map.setView(p, 14); drawTpl(); });
 
 // 點到折線的最短距離
@@ -1189,23 +1205,30 @@ $('auto').onclick = async () => {
   if (!tplCenter) return setStatus('先點地圖（或按 ◎）設定範圍中心');
   const strokes = curStrokes();
   if (!strokes.length) return setStatus('畫板上還沒有圖案');
-  const R = $('arad').value * 1000, D = $('adist').value * 1000;
+  const R = $('arad').value * 1000, D = $('adist').value * 1000, anyDist = $('anydist').checked;
   try { await ensureNet(L.latLngBounds(offset(tplCenter, -R - 150, -R - 150), offset(tplCenter, R + 150, R + 150)), false); } catch (e) { return setStatus(e.message); }
   const t0 = performance.now(), [ox, oy] = net.xy(tplCenter.lat, tplCenter.lng);
   const lines = strokes.map(strokeLine), ru = Math.max(...lines.flat().map(([u, v]) => Math.hypot(u, v)));
   const maxSize = 1.5 * R / ru; // 圖案半徑最多佔範圍的 75%，留空間讓它移動
-  // 第一輪：用經驗值估大小（路線約為圖案總長的 1.15 倍，多筆再加連接段）
-  let size = Math.min(maxSize, 2 * D / ((strokes.length > 1 ? 1.3 : 1.15) * lines.reduce((s, l) => s + polyLen(l), 0)));
-  const p1 = await autoPass(strokes, size, R, ox, oy, '第 1 輪：');
-  const all = [...p1.res];
-  // 第二輪：實際路線長度和預估常差很多（繞路、連接段），用第一輪的實際「路線長 ÷ 圖寬」校正大小再找一次
-  const perSize = p1.res.map(r => r.km * 1000 / r.size).sort((a, b) => a - b)[p1.res.length >> 1];
-  if (perSize && !p1.res.some(r => Math.abs(r.km * 1000 - D) / D < 0.1)) {
-    const size2 = Math.min(maxSize, D / perSize);
-    if (Math.abs(size2 - size) / size > 0.05) all.push(...(await autoPass(strokes, size2, R, ox, oy, '第 2 輪：')).res);
+  const all = [];
+  if (anyDist) {
+    // 只求最像：從範圍放得下的最大尺寸往下試三種大小，大的細節多但可能找不到好位置，小的反過來
+    for (const [i, f] of [0.9, 0.7, 0.5].entries()) all.push(...(await autoPass(strokes, maxSize * f, R, ox, oy, `大小 ${i + 1}/3：`)).res);
+    all.forEach(r => { r.dev = 0; r.total = r.score; });
+  } else {
+    // 第一輪：用經驗值估大小（路線約為圖案總長的 1.15 倍，多筆再加連接段）
+    const size = Math.min(maxSize, 2 * D / ((strokes.length > 1 ? 1.3 : 1.15) * lines.reduce((s, l) => s + polyLen(l), 0)));
+    const p1 = await autoPass(strokes, size, R, ox, oy, '第 1 輪：');
+    all.push(...p1.res);
+    // 第二輪：實際路線長度和預估常差很多（繞路、連接段），用第一輪的實際「路線長 ÷ 圖寬」校正大小再找一次
+    const perSize = p1.res.map(r => r.km * 1000 / r.size).sort((a, b) => a - b)[p1.res.length >> 1];
+    if (perSize && !p1.res.some(r => Math.abs(r.km * 1000 - D) / D < 0.1)) {
+      const size2 = Math.min(maxSize, D / perSize);
+      if (Math.abs(size2 - size) / size > 0.05) all.push(...(await autoPass(strokes, size2, R, ox, oy, '第 2 輪：')).res);
+    }
+    // 距離和目標差超過 10% 就扣分
+    all.forEach(r => { r.dev = (r.km * 1000 - D) / D; r.total = r.score + 30 * Math.max(0, Math.abs(r.dev) - 0.1); });
   }
-  // 距離和目標差超過 10% 就扣分
-  all.forEach(r => { r.dev = (r.km * 1000 - D) / D; r.total = r.score + 30 * Math.max(0, Math.abs(r.dev) - 0.1); });
   all.sort((a, b) => a.total - b.total);
   autoCands = [];
   for (const r of all) { // 兩輪可能找到同一個地方，去掉重複
@@ -1218,11 +1241,11 @@ $('auto').onclick = async () => {
     L.polyline(r.Ts.map(({ T }) => T.map(([x, y]) => net.ll(x, y))), { color: COLORS[i], weight: 1.5, dashArray: '4 6', interactive: false }).addTo(autoLayer);
     L.polyline(r.coords, { color: COLORS[i], weight: 4, opacity: .8 }).addTo(autoLayer).on('click', () => applyAuto(i));
   });
-  const devText = r => Math.abs(r.dev) < 0.05 ? '剛好' : `比目標${r.dev > 0 ? '多' : '少'} ${Math.abs(r.km - D / 1000).toFixed(1)} km`;
-  $('autores').innerHTML = autoCands.map((r, i) => `<div class="hot ok" data-auto="${i}" style="border-left:4px solid ${COLORS[i]}">${thumb(r.coords)}<div><b>第 ${i + 1} 名・${r.km.toFixed(1)} km（${devText(r)}）</b>` +
+  const devText = r => anyDist ? '' : Math.abs(r.dev) < 0.05 ? '（剛好）' : `（比目標${r.dev > 0 ? '多' : '少'} ${Math.abs(r.km - D / 1000).toFixed(1)} km）`;
+  $('autores').innerHTML = autoCands.map((r, i) => `<div class="hot ok" data-auto="${i}" style="border-left:4px solid ${COLORS[i]}">${thumb(r.coords)}<div><b>第 ${i + 1} 名・${r.km.toFixed(1)} km${devText(r)}</b>` +
     `<span>寬 ${(r.size / 1000).toFixed(1)} km・漏畫 ${r.miss.toFixed(0)} m・亂繞 ${r.wander.toFixed(0)} m・尖角 ${Math.round(r.kept * 100)}%</span><br><small>點這裡套用</small></div></div>`).join('');
   if (autoCands.length) map.fitBounds(autoLayer.getLayers().reduce((b, l) => b.extend(l.getBounds()), L.latLngBounds([])), { padding: [30, 30] });
-  const tooBig = autoCands.length && autoCands[0].dev < -0.1 && autoCands[0].size > 0.95 * maxSize;
+  const tooBig = !anyDist && autoCands.length && autoCands[0].dev < -0.1 && autoCands[0].size > 0.95 * maxSize;
   setStatus(autoCands.length ? `找到 ${autoCands.length} 條（${((performance.now() - t0) / 1000).toFixed(1)} 秒）` +
     (tooBig ? '。範圍放不下這個距離，把半徑調大或換個中心點試試' : '') : '找不到可跑的路線，換個中心或把半徑調大試試');
 };
