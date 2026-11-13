@@ -8,7 +8,7 @@
   1. 下載 https://download.geofabrik.de/asia/taiwan-latest.osm.pbf 到 cache/
   2. pip install osmium
   3. python build_net.py
-輸出：net/index.json、net/<i>_<j>.json（每塊 0.02°，約 2 km）
+輸出：net/index.json、net/<i>_<j>.json（每塊 0.02°，約 2 km）；範圍見 BBOXES（雙北、鹿港）
 
 每塊的格式（為了省空間，不用 Overpass 原本的 JSON）：
   n: 節點 [[id 與前一個的差, 緯度×1e6 − 塊的南緣, 經度×1e6 − 塊的西緣], ...]（依 id 排序）
@@ -29,7 +29,8 @@ import osmium
 PBF = "cache/taiwan-latest.osm.pbf"
 OUT = Path("net")
 TILE = 0.02
-BBOX = (24.67, 121.28, 25.30, 122.01)  # 南、西、北、東：雙北（含一點桃園、基隆、宜蘭邊界）
+BBOXES = [(24.67, 121.28, 25.30, 122.01),  # 南、西、北、東：雙北（含一點桃園、基隆、宜蘭邊界）
+          (23.98, 120.36, 24.14, 120.52)]  # 鹿港（含福興、和美、線西一帶）
 HW = ["trunk", "trunk_link", "primary", "primary_link", "secondary", "secondary_link", "tertiary", "tertiary_link", "unclassified",
       "residential", "living_street", "service", "pedestrian", "footway", "path", "steps", "cycleway", "track"]
 HW_IDX = {h: i for i, h in enumerate(HW)}
@@ -41,8 +42,7 @@ def tile_of(lat, lon):
 
 
 def inside(lat, lon, pad=0.01):
-    s, w, n, e = BBOX
-    return s - pad <= lat <= n + pad and w - pad <= lon <= e + pad
+    return any(s - pad <= lat <= n + pad and w - pad <= lon <= e + pad for s, w, n, e in BBOXES)
 
 
 class Collector(osmium.SimpleHandler):
@@ -118,8 +118,7 @@ def main():
         text = json.dumps({"n": nodes, "w": ways, "s": sig}, separators=(",", ":"))
         (OUT / f"{i}_{j}.json").write_text(text, encoding="utf-8")
         total += len(text)
-    s, w, n, e = BBOX
-    (OUT / "index.json").write_text(json.dumps({"v": date.today().isoformat(), "tile": TILE, "bbox": [s, w, n, e],
+    (OUT / "index.json").write_text(json.dumps({"v": date.today().isoformat(), "tile": TILE, "bboxes": [list(b) for b in BBOXES],
                                                 "hw": HW, "tiles": [f"{i}_{j}" for i, j in sorted(c.tiles)]}, separators=(",", ":")),
                                     encoding="utf-8")
     print(f"輸出 {len(c.tiles)} 塊，共 {total / 1e6:.1f} MB（GitHub Pages 會再 gzip 壓縮），{time.time() - t0:.0f} 秒")

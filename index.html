@@ -310,7 +310,7 @@ async function overpass(q) {
   }
   throw new Error('路網伺服器忙碌中，請稍後再試（已下載的區塊會保留，再按一次會接著下載）');
 }
-// 雙北預先打包的路網（build_net.py 產生，放在 net/）；本機開檔時讀不到就全部改用 Overpass
+// 雙北、鹿港預先打包的路網（build_net.py 產生，放在 net/）；本機開檔時讀不到就全部改用 Overpass
 let preIdx; // undefined = 還沒讀過
 async function preIndex() {
   if (preIdx !== undefined) return preIdx;
@@ -339,11 +339,11 @@ async function ensureNet(bounds, withView = true) {
   if (area > (withView ? 20 : 30)) throw new Error(`範圍太大（${area.toFixed(0)} km²），請把地圖放大一點`);
   const i0 = Math.floor(req.getSouth() / TILE), i1 = Math.floor(req.getNorth() / TILE), j0 = Math.floor(req.getWest() / TILE), j1 = Math.floor(req.getEast() / TILE);
   const b = L.latLngBounds([i0 * TILE, j0 * TILE], [(i1 + 1) * TILE, (j1 + 1) * TILE]);
-  // 雙北範圍內讀預先打包的檔案，範圍外才排進 Overpass 佇列
+  // 雙北、鹿港範圍內讀預先打包的檔案，範圍外才排進 Overpass 佇列
   const pre = await preIndex(), preKeys = new Map(), queue = [];
   for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
     const la = (i + .5) * TILE, lo = (j + .5) * TILE;
-    if (!pre || la < pre.bbox[0] || la > pre.bbox[2] || lo < pre.bbox[1] || lo > pre.bbox[3]) { queue.push([i, j]); continue; }
+    if (!pre || !(pre.bboxes || [pre.bbox]).some(([s, w, n, e]) => la >= s && la <= n && lo >= w && lo <= e)) { queue.push([i, j]); continue; }
     const k = Math.floor(la / pre.tile) + '_' + Math.floor(lo / pre.tile);
     if (pre.have.has(k)) (preKeys.get(k) || preKeys.set(k, []).get(k)).push([i, j]); // 不在清單上＝那一塊沒有路（山區、河）
   }
@@ -868,12 +868,14 @@ const TEMPLATES = {
   '🐌 蝸牛': { s: [[[[1.0,-0.44],[0.88,-0.68],[-1.0,-0.68],[-0.44,-0.56],[-0.61,-0.45],[-0.75,-0.28],[-0.81,-0.1],[-0.82,0.12],[-0.76,0.31],[-0.63,0.49],[-0.45,0.61],[-0.24,0.67],[-0.05,0.66],[0.16,0.58],[0.3,0.46],[0.41,0.31],[0.46,0.12],[0.46,-0.07],[0.41,-0.25],[0.29,-0.42],[0.47,-0.38],[0.6,0.04],[0.54,0.08],[0.55,0.58],[0.59,0.61],[0.63,0.57],[0.64,0.17],[0.65,0.21],[0.67,0.13],[0.78,0.57],[0.81,0.6],[0.86,0.59],[0.87,0.55],[0.75,0.08],[0.7,0.04],[0.82,-0.38]],true],[[[0.0,0.03],[-0.02,0.15],[-0.12,0.25],[-0.27,0.26],[-0.35,0.22],[-0.45,0.09],[-0.47,-0.01],[-0.4,-0.19],[-0.22,-0.31],[0.0,-0.29],[0.1,-0.22],[0.18,-0.12],[0.22,-0.0],[0.22,0.13],[0.18,0.26],[0.09,0.37],[-0.03,0.45],[-0.17,0.49],[-0.32,0.48]],false]] },
   '🐢 烏龜': { s: [[[[-0.36,-0.48],[-0.6,-0.48],[-0.6,-0.28],[-1.0,-0.28],[-0.8,-0.18],[-0.8,-0.13],[-0.67,-0.13],[-0.65,0.04],[-0.57,0.21],[-0.45,0.34],[-0.27,0.44],[0.03,0.47],[0.31,0.36],[0.48,0.16],[0.55,-0.13],[0.62,-0.13],[0.57,-0.07],[0.57,-0.01],[0.69,0.1],[0.88,0.1],[0.99,0.0],[0.99,-0.08],[0.92,-0.15],[0.8,-0.18],[0.68,-0.17],[0.68,-0.28],[0.49,-0.28],[0.49,-0.48],[0.24,-0.48],[0.24,-0.28],[-0.36,-0.28]],true],[[[-0.65,-0.13],[-0.41,0.26],[-0.06,0.41],[0.29,0.26],[0.53,-0.13]],false],[[[0.89,0.01],[0.87,-0.04],[0.81,-0.06],[0.76,-0.04],[0.73,0.01],[0.76,0.07],[0.81,0.09],[0.87,0.07]],true]] },
   '🐧 企鵝': { s: [[[[-0.0,-0.92],[-0.06,-0.97],[-0.17,-1.0],[-0.4,-0.96],[-0.43,-0.92],[-0.41,-0.88],[-0.25,-0.83],[-0.41,-0.64],[-0.52,-0.35],[-0.67,-0.52],[-0.72,-0.49],[-0.74,-0.4],[-0.7,-0.17],[-0.61,0.08],[-0.52,0.22],[-0.42,0.29],[-0.32,0.43],[-0.37,0.61],[-0.33,0.8],[-0.19,0.95],[0.0,1.0],[0.19,0.95],[0.33,0.8],[0.37,0.61],[0.32,0.43],[0.42,0.29],[0.52,0.22],[0.61,0.08],[0.7,-0.17],[0.74,-0.4],[0.72,-0.49],[0.67,-0.52],[0.52,-0.35],[0.41,-0.64],[0.25,-0.83],[0.41,-0.88],[0.43,-0.92],[0.4,-0.96],[0.17,-1.0],[0.06,-0.97]],true],[[[0.34,-0.28],[0.28,-0.57],[0.13,-0.77],[0.03,-0.81],[-0.07,-0.8],[-0.24,-0.65],[-0.33,-0.43],[-0.33,-0.17],[-0.26,0.06],[-0.13,0.21],[0.03,0.25],[0.19,0.17],[0.3,-0.03]],true],[[[-0.03,0.68],[-0.07,0.6],[-0.15,0.56],[-0.23,0.6],[-0.27,0.68],[-0.23,0.76],[-0.15,0.8],[-0.07,0.76]],true],[[[0.27,0.68],[0.23,0.6],[0.15,0.56],[0.07,0.6],[0.03,0.68],[0.07,0.76],[0.15,0.8],[0.23,0.76]],true]] },
+  '🦌 鹿': { s: [[[[-0.69,-1.0],[-0.69,-0.34],[-0.81,-0.22],[-0.83,-0.13],[-0.79,-0.03],[-0.95,0.09],[-0.95,0.16],[-0.88,0.17],[-0.75,0.01],[-0.55,0.12],[-0.27,0.17],[0.03,0.17],[0.31,0.1],[0.46,0.47],[0.44,0.55],[0.49,0.6],[0.38,0.75],[0.49,0.68],[0.47,0.76],[0.3,0.84],[0.29,0.9],[0.34,0.92],[0.45,0.87],[0.45,0.96],[0.52,0.97],[0.59,0.65],[0.75,0.99],[0.82,0.98],[0.8,0.9],[0.93,0.91],[0.93,0.84],[0.76,0.8],[0.68,0.62],[0.89,0.53],[0.95,0.46],[0.96,0.39],[0.86,0.32],[0.68,0.33],[0.53,-0.05],[0.55,-0.19],[0.47,-0.3],[0.56,-0.3],[0.56,-1.0],[0.42,-1.0],[0.42,-0.34],[0.33,-0.38],[0.33,-1.0],[0.19,-1.0],[0.19,-0.43],[-0.07,-0.46],[-0.32,-0.45],[-0.32,-1.0],[-0.46,-1.0],[-0.46,-0.43],[-0.55,-0.4],[-0.55,-1.0]],true],[[[0.78,0.5],[0.75,0.45],[0.7,0.43],[0.65,0.45],[0.63,0.5],[0.65,0.55],[0.7,0.58],[0.75,0.55]],true]] },
+  '🐙 章魚': { s: [[[[0.05,-0.37],[-0.03,-0.6],[-0.11,-0.71],[-0.24,-0.8],[-0.23,-0.87],[-0.29,-0.9],[-0.4,-0.83],[-0.49,-0.82],[-0.52,-0.78],[-0.48,-0.72],[-0.52,-0.57],[-0.49,-0.33],[-0.31,-0.02],[-0.43,0.07],[-0.69,-0.03],[-0.83,-0.17],[-0.87,-0.26],[-0.85,-0.46],[-0.87,-0.51],[-0.95,-0.5],[-1.0,-0.35],[-0.99,-0.22],[-0.86,-0.01],[-0.65,0.13],[-0.44,0.2],[-0.47,0.48],[-0.38,0.71],[-0.22,0.85],[-0.02,0.9],[0.2,0.86],[0.36,0.73],[0.47,0.5],[0.44,0.2],[0.65,0.13],[0.86,-0.01],[0.99,-0.22],[1.0,-0.35],[0.95,-0.5],[0.87,-0.51],[0.85,-0.46],[0.87,-0.26],[0.83,-0.17],[0.69,-0.03],[0.43,0.07],[0.31,-0.02],[0.49,-0.33],[0.52,-0.58],[0.49,-0.71],[0.42,-0.81],[0.29,-0.9],[0.23,-0.88],[0.22,-0.82],[0.38,-0.65],[0.4,-0.47],[0.33,-0.27],[0.2,-0.06],[0.04,-0.09],[0.06,-0.13]],true],[[[-0.08,0.43],[-0.1,0.36],[-0.17,0.34],[-0.24,0.36],[-0.26,0.43],[-0.24,0.5],[-0.17,0.52],[-0.1,0.5]],true],[[[0.26,0.43],[0.24,0.36],[0.17,0.34],[0.1,0.36],[0.08,0.43],[0.1,0.5],[0.17,0.52],[0.24,0.5]],true]] },
 };
 let tplCenter = null, tplSize = 2000, tplRot = 0;
 Object.keys(TEMPLATES).forEach(k => $('tplsel').add(new Option(k, k)));
 $('tplsel').add(new Option('✏️ 自己畫（畫板，可畫多筆）', 'pad'));
 // 臉、動物、房子等要保持正立，自動生成只轉 ±15°；其他圖案可以轉 ±45°
-const UPRIGHT = new Set(['🐕 臘腸狗', '🏠 房子', '👻 小鬼', '🐱 貓咪', '😊 笑臉', '🐻 熊', '🐰 兔子', '🍎 蘋果', '🎄 聖誕樹', '⚡ 閃電', '🐈 坐著的貓', '🐇 兔子全身', '🦆 小鴨', '🐘 大象', '🐋 鯨魚', '🐌 蝸牛', '🐢 烏龜', '🐧 企鵝', 'pad']);
+const UPRIGHT = new Set(['🐕 臘腸狗', '🏠 房子', '👻 小鬼', '🐱 貓咪', '😊 笑臉', '🐻 熊', '🐰 兔子', '🍎 蘋果', '🎄 聖誕樹', '⚡ 閃電', '🐈 坐著的貓', '🐇 兔子全身', '🦆 小鴨', '🐘 大象', '🐋 鯨魚', '🐌 蝸牛', '🐢 烏龜', '🐧 企鵝', '🦌 鹿', '🐙 章魚', 'pad']);
 const multiTpl = () => $('tplsel').value === 'pad' || !Array.isArray(TEMPLATES[$('tplsel').value]); // 多筆畫只能用自動生成
 
 // ===== 手繪畫板：一筆一筆畫，外框＋眼睛、嘴巴等細節 =====
@@ -1068,6 +1070,45 @@ function distToPoly(px, py, P) {
   }
   return best;
 }
+// 同樣是「點到折線（可多條）的最短距離」，但先把線段放進 cell 公尺的格子，查詢時由近到遠一圈一圈找，
+// 結果和 distToPoly 完全相同；同一組折線要查很多次時（找路、評分）快很多。
+// cap：只需要知道「比 cap 遠」時，超過 cap 就不再往外找、直接回傳 cap
+function polyIndex(polys, cell = 80, cap = Infinity) {
+  const grid = new Map(), segs = [], key = (i, j) => i * 100003 + j;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const P of polys) for (let i = 1; i < P.length; i++) {
+    const [ax, ay] = P[i - 1], [bx, by] = P[i], k = segs.push([ax, ay, bx, by]) - 1;
+    const len = Math.hypot(bx - ax, by - ay), n = Math.max(1, Math.ceil(len / (cell / 2)));
+    for (let j = 0; j <= n; j++) { // 沿線段取點，把經過的格子都記下來
+      const gi = Math.floor((ax + (bx - ax) * j / n) / cell), gj = Math.floor((ay + (by - ay) * j / n) / cell), kk = key(gi, gj);
+      const b = grid.get(kk) || grid.set(kk, []).get(kk); if (b.at(-1) !== k) b.push(k);
+    }
+    x0 = Math.min(x0, ax, bx); y0 = Math.min(y0, ay, by); x1 = Math.max(x1, ax, bx); y1 = Math.max(y1, ay, by);
+  }
+  const segD = (px, py, [ax, ay, bx, by]) => {
+    const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L2));
+    return Math.hypot(px - ax - t * dx, py - ay - t * dy);
+  };
+  const maxR = Math.ceil(Math.max(x1 - x0, y1 - y0) / cell) + 2;
+  return (px, py) => {
+    if (!segs.length) return Infinity;
+    const ci = Math.floor(px / cell), cj = Math.floor(py / cell);
+    // 點在範圍外很遠時，先跳到離範圍最近的那一圈
+    const out = Math.max(x0 - px, px - x1, y0 - py, py - y1, 0);
+    if (out >= cap) return cap;
+    const r0 = Math.max(0, Math.floor(out / cell) - 1), rMax = Math.min(r0 + maxR, Math.ceil(cap / cell) + 1);
+    let best = Infinity;
+    for (let r = r0; r <= rMax; r++) {
+      for (let i = ci - r; i <= ci + r; i++) for (let j = cj - r; j <= cj + r; j++) {
+        if (Math.max(Math.abs(i - ci), Math.abs(j - cj)) !== r) continue; // 只看這一圈
+        const b = grid.get(key(i, j)); if (!b) continue;
+        for (const k of b) { const d = segD(px, py, segs[k]); if (d < best) best = d; }
+      }
+      if (best <= (r - 1) * cell) break; // 再外圈的格子至少離 (r − 1) × cell（線段擦過格子角落時可能只記在隔壁格），不可能更近
+    }
+    return Math.min(best, cap);
+  };
+}
 // 折線每隔 step 公尺取一點
 function resampleXY(P, step) {
   const out = [];
@@ -1086,28 +1127,36 @@ function tplXY(shape, cx, cy, size, rot, closed = true) {
 }
 
 // 路網上的 A*：w(v, u, 長度) 是路段成本，hk 是成本對長度的最低倍率（保證不高估）
+// 自動生成一次要跑上千次，所以 g、prev 用重複使用的數字陣列（比 Map 快很多），每次呼叫換一個 stamp 當作清空
+let AS = null;
 function astarNet(s, t, w, hk = 1, maxPops = 20000) {
-  const { N, adj } = net, g = new Map([[s, 0]]), prev = new Map();
-  const h = i => hk * Math.hypot(N[i].xy[0] - N[t].xy[0], N[i].xy[1] - N[t].xy[1]);
+  const { N, adj } = net;
+  if (!AS || AS.g.length < N.length) AS = { g: new Float64Array(N.length), prev: new Int32Array(N.length), seen: new Uint32Array(N.length), stamp: 0 };
+  const { g, prev, seen } = AS, st = ++AS.stamp, tx = N[t].xy[0], ty = N[t].xy[1];
+  const G = i => seen[i] === st ? g[i] : Infinity;
+  const h = i => hk * Math.hypot(N[i].xy[0] - tx, N[i].xy[1] - ty);
+  seen[s] = st; g[s] = 0; prev[s] = -1;
   const heap = [[h(s), s]];
   for (let pops = 0; heap.length;) {
     const [f, v] = hpop(heap);
     if (v === t) break;
     if (++pops > maxPops) return null; // 接不到（例如路標在河裡）
-    if (f - h(v) > g.get(v) + 1e-6) continue;
+    if (f - h(v) > g[v] + 1e-6) continue;
     for (const [u, len] of adj[v]) {
-      const ng = g.get(v) + w(v, u, len);
-      if (ng < (g.get(u) ?? Infinity)) { g.set(u, ng); prev.set(u, v); hpush(heap, [ng + h(u), u]); }
+      const ng = g[v] + w(v, u, len);
+      if (ng < G(u)) { seen[u] = st; g[u] = ng; prev[u] = v; hpush(heap, [ng + h(u), u]); }
     }
   }
-  if (!g.has(t)) return null;
-  const p = []; for (let v = t; v !== undefined; v = prev.get(v)) p.push(v);
+  if (seen[t] !== st) return null;
+  const p = []; for (let v = t; v !== -1; v = prev[v]) p.push(v);
   return p.reverse();
 }
+// 偏離成本 min((兩端平均距離 / 25)², 30) 在平均約 137 m 就封頂，所以單端距離只需要算到 2 × 137 ≈ 280 m
+const CAP_D = 280;
 // 沿街道描出一筆（封閉的 T 頭尾相同）：相鄰路標（每 150 m）之間跑 A*，越偏離這一筆越貴
 function shapeRoute(T, closed) {
-  const { N } = net, nd = new Float32Array(N.length).fill(-1);
-  const dT = i => nd[i] >= 0 ? nd[i] : (nd[i] = distToPoly(N[i].xy[0], N[i].xy[1], T));
+  const { N } = net, nd = new Float32Array(N.length).fill(-1), dist = polyIndex([T], 80, CAP_D);
+  const dT = i => nd[i] >= 0 ? nd[i] : (nd[i] = dist(N[i].xy[0], N[i].xy[1]));
   const w = (v, u, len) => len * (1 + Math.min(((dT(v) + dT(u)) / 2 / 25) ** 2, 30));
   const wps = [...resampleXY(T, 150), ...(closed ? [] : [T.at(-1)])].map(([x, y]) => net.nearestNode(x, y)).filter((v, i, a) => v >= 0 && v !== a[i - 1]);
   if (wps.length < (closed ? 3 : 2)) return null;
@@ -1127,8 +1176,8 @@ function shapeRoute(T, closed) {
 // 連接段會在圖上多出一條線，所以盡量藏起來：沿已經畫過的街道折返很便宜（×0.2，重複跑沒關係），
 // 沿圖案線條走的成本正常，離開圖案越遠越貴（最多 ×31）→ 只在最短的地方「搭橋」過去
 function assemble(paths, Ts) {
-  const { N } = net, on = new Set(paths.flatMap(q => q.p)), nd = new Float32Array(N.length).fill(-1);
-  const dT = i => nd[i] >= 0 ? nd[i] : (nd[i] = Math.min(...Ts.map(T => distToPoly(N[i].xy[0], N[i].xy[1], T))));
+  const { N } = net, on = new Set(paths.flatMap(q => q.p)), nd = new Float32Array(N.length).fill(-1), dist = polyIndex(Ts, 80, CAP_D);
+  const dT = i => nd[i] >= 0 ? nd[i] : (nd[i] = dist(N[i].xy[0], N[i].xy[1]));
   const conW = (v, u, len) => len * (on.has(v) && on.has(u) ? 0.2 : 1 + Math.min(((dT(v) + dT(u)) / 2 / 25) ** 2, 30));
   const rest = [...paths].sort((a, b) => b.p.length - a.p.length), seq = [...rest.shift().p];
   while (rest.length) {
@@ -1154,26 +1203,28 @@ function scoreRoute(R, Ts, size) {
   const rl = polyLen(R), tl = Ts.reduce((s, { T }) => s + polyLen(T), 0);
   if (rl < 0.6 * tl) return null; // 跳過太多路標，縮成一小圈
   const mean = (pts, f) => pts.reduce((s, [x, y]) => s + f(x, y), 0) / pts.length;
-  const md = Ts.flatMap(({ T }) => resampleXY(T, 10)).map(([x, y]) => distToPoly(x, y, R));
+  const dR = polyIndex([R]), dTs = polyIndex(Ts.map(({ T }) => T));
+  const md = Ts.flatMap(({ T }) => resampleXY(T, 10)).map(([x, y]) => dR(x, y));
   const miss = md.reduce((a, d) => a + d, 0) / md.length, gap = md.filter(d => d > 0.04 * size).length / md.length; // gap：整塊沒畫到（例如少一隻耳朵）的比例
-  const wander = mean(resampleXY(R, 10), (x, y) => Math.min(...Ts.map(({ T }) => distToPoly(x, y, T))));
+  const wander = mean(resampleXY(R, 10), dTs);
   // 尖角：轉超過 40° 的頂點，有幾成在路線 3% 圖寬以內
   const turn = (q, p, r) => { const ax = p[0] - q[0], ay = p[1] - q[1], bx = r[0] - p[0], by = r[1] - p[1]; return Math.abs(Math.atan2(ax * by - ay * bx, ax * bx + ay * by)); };
   const cs = Ts.flatMap(({ T, closed }) => {
     const V = closed ? T.slice(0, -1) : T;
     return V.filter((p, i) => (closed || (i > 0 && i < V.length - 1)) && turn(V[(i + V.length - 1) % V.length], p, V[(i + 1) % V.length]) > 40 * Math.PI / 180);
   });
-  const kept = cs.length ? cs.filter(([x, y]) => distToPoly(x, y, R) < 0.03 * size).length / cs.length : 1;
+  const kept = cs.length ? cs.filter(([x, y]) => dR(x, y) < 0.03 * size).length / cs.length : 1;
   const thr = Ts.length > 1 ? 1.4 : 1.25; // 多筆要多跑連接段，容許多一點
   return { score: (miss + wander) / 2 / size * 100 + 20 * (1 - kept) + 50 * gap + 10 * Math.max(0, rl / tl - thr), miss, wander, kept, gap, km: rl / 1000 };
 }
 
-// 一輪搜尋：固定圖案大小（±10%），粗搜圓圈內的擺法，前 8 名實際沿街道找路、接成一條、評分
-async function autoPass(strokes, size, R, ox, oy, label) {
+// 一輪搜尋：sizes 裡每個大小（各 ±10%）粗搜圓圈內的擺法，只有前幾名實際沿街道找路、接成一條、評分
+// （沿街道找路最花時間，次數越少越快）
+async function autoPass(strokes, sizes, R, ox, oy, label) {
   const lines = strokes.map(strokeLine), ru = Math.max(...lines.flat().map(([u, v]) => Math.hypot(u, v))), multi = strokes.length > 1;
   const rotLim = UPRIGHT.has($('tplsel').value) ? 15 : 45, cands = [];
-  for (const sc of [0.9, 1, 1.1]) {
-    const sz = size * sc, step = Math.max(50, sz / 15), pts = lines.flatMap(l => resampleXY(l, 30 / (sz / 2))), lim = R - ru * sz / 2;
+  for (const sz of sizes.flatMap(size => [0.9, 1, 1.1].map(sc => size * sc))) {
+    const step = Math.max(50, sz / 15), pts = lines.flatMap(l => resampleXY(l, 30 / (sz / 2))), lim = R - ru * sz / 2;
     if (lim < 0) continue;
     for (let cx = ox - lim; cx <= ox + lim; cx += step) for (let cy = oy - lim; cy <= oy + lim; cy += step) {
       if (Math.hypot(cx - ox, cy - oy) > lim) continue;
@@ -1185,10 +1236,16 @@ async function autoPass(strokes, size, R, ox, oy, label) {
     }
   }
   cands.sort((a, b) => a[0] - b[0]);
-  const seeds = [];
-  for (const c of cands) {
-    if (seeds.some(q => Math.hypot(q[1] - c[1], q[2] - c[2]) < c[3] / 4 && Math.abs(q[4] - c[4]) < rotLim * 2 / 3)) continue;
-    seeds.push(c); if (seeds.length === 8) break;
+  // 每種大小各取前 8 名（粗搜的排名不太準，名額再少就常錯過好位置）
+  const seeds = [], quota = 8;
+  for (const size of sizes) {
+    const mine = [];
+    for (const c of cands) {
+      if (Math.abs(c[3] / size - 1) > 0.11) continue;
+      if (mine.some(q => Math.hypot(q[1] - c[1], q[2] - c[2]) < c[3] / 4 && Math.abs(q[4] - c[4]) < rotLim * 2 / 3)) continue;
+      mine.push(c); if (mine.length === quota) break;
+    }
+    seeds.push(...mine);
   }
   const res = [];
   for (const [i, [, cx, cy, sz, rot]] of seeds.entries()) {
@@ -1216,18 +1273,18 @@ $('auto').onclick = async () => {
   const all = [];
   if (anyDist) {
     // 只求最像：從範圍放得下的最大尺寸往下試三種大小，大的細節多但可能找不到好位置，小的反過來
-    for (const [i, f] of [0.9, 0.7, 0.5].entries()) all.push(...(await autoPass(strokes, maxSize * f, R, ox, oy, `大小 ${i + 1}/3：`)).res);
+    all.push(...(await autoPass(strokes, [0.9, 0.7, 0.5].map(f => maxSize * f), R, ox, oy, '')).res);
     all.forEach(r => { r.dev = 0; r.total = r.score; });
   } else {
     // 第一輪：用經驗值估大小（路線約為圖案總長的 1.15 倍，多筆再加連接段）
     const size = Math.min(maxSize, 2 * D / ((strokes.length > 1 ? 1.3 : 1.15) * lines.reduce((s, l) => s + polyLen(l), 0)));
-    const p1 = await autoPass(strokes, size, R, ox, oy, '第 1 輪：');
+    const p1 = await autoPass(strokes, [size], R, ox, oy, '第 1 輪：');
     all.push(...p1.res);
     // 第二輪：實際路線長度和預估常差很多（繞路、連接段），用第一輪的實際「路線長 ÷ 圖寬」校正大小再找一次
     const perSize = p1.res.map(r => r.km * 1000 / r.size).sort((a, b) => a - b)[p1.res.length >> 1];
     if (perSize && !p1.res.some(r => Math.abs(r.km * 1000 - D) / D < 0.1)) {
       const size2 = Math.min(maxSize, D / perSize);
-      if (Math.abs(size2 - size) / size > 0.05) all.push(...(await autoPass(strokes, size2, R, ox, oy, '第 2 輪：')).res);
+      if (Math.abs(size2 - size) / size > 0.05) all.push(...(await autoPass(strokes, [size2], R, ox, oy, '第 2 輪：')).res);
     }
     // 距離和目標差超過 10% 就扣分
     all.forEach(r => { r.dev = (r.km * 1000 - D) / D; r.total = r.score + 30 * Math.max(0, Math.abs(r.dev) - 0.1); });
