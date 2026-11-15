@@ -69,13 +69,28 @@
   .fab button.me { background: var(--c2); color: #fff; }
   #compass { width: 44px; height: 44px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 5px rgba(0,0,0,.3); cursor: pointer; font: 700 11px system-ui; color: #c92a2a; display: none; }
   #compass i { display: block; font-style: normal; line-height: 1; }
+  .resume { background: #e7f5ff; border: 1px solid #a5d8ff; border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; font-size: 13px; }
+  .resume small { color: var(--mute); }
+  details.box { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; margin-top: 10px; }
+  details.box > summary { cursor: pointer; font-size: 13px; font-weight: 600; padding: 2px 0; }
+  details.box[open] > summary { margin-bottom: 4px; }
+  details.help { font-size: 12px; color: var(--mute); margin: 6px 0; line-height: 1.6; }
+  details.help > summary { cursor: pointer; color: var(--c2); }
+  .seg { display: flex; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { flex: 1; padding: 6px 0; border: 0; background: #f8f9fa; cursor: pointer; font-size: 12px; }
+  .seg button.on { background: #fff4e6; color: var(--c); font-weight: 600; }
+  .btn.big { font-size: 15px; padding: 11px 10px; }
 </style>
 </head>
 <body>
 <div id="app">
   <aside id="side">
     <h1>🏃 雙北 GPS Art Studio <button class="btn" id="foldbtn" style="float:right;flex:none;padding:2px 8px;font-size:12px">▾ 收起</button></h1>
-    <div class="sub">描圖・範本・像素圖 → 沿真實街道生成跑步路線 → 語音導航</div>
+    <div class="sub">選圖案 → 沿真實街道自動生成跑步路線 → 語音導航</div>
+    <div id="resumebox" class="resume" style="display:none">
+      <div>🏃 上次的導航還沒跑完 <small id="resumeinfo"></small></div>
+      <div class="row" style="margin-top:6px"><button class="btn blue" id="resume">▶ 接著跑</button><button class="btn" id="resumeno" style="flex:none">不用了</button></div>
+    </div>
     <div class="stats">
       <div class="stat"><b id="dist">0.00</b><span>總距離 km</span></div>
       <div class="stat"><b id="time">0:00</b><span>預估時間 (6 分速)</span></div>
@@ -85,19 +100,68 @@
       <button class="btn" id="clear">清除</button>
       <button class="btn pri" id="gpx">匯出 GPX</button>
     </div>
-    <label style="margin:-4px 0 4px;font-size:13px"><input type="checkbox" id="avoid"> 🚦 避開大馬路與紅綠燈（優先走巷弄、公園）</label>
-    <div class="sub" id="sigs" style="margin-bottom:10px"></div>
 
     <div class="tabs">
-      <button data-tab="draw" class="on">描圖</button>
-      <button data-tab="tpl">範本</button>
-      <button data-tab="pix">像素</button>
-      <button data-tab="hot">熱門</button>
-      <button data-tab="nav">導航</button>
+      <button data-tab="hot">🔥 熱門</button>
+      <button data-tab="tpl" class="on">✨ 生成</button>
+      <button data-tab="draw">✏️ 手繪</button>
+      <button data-tab="nav">🏃 導航</button>
     </div>
 
-    <section class="pane on" id="pane-draw">
-      <div class="hint">在地圖上依序點擊控制點，系統會用步行路網自動貼合街道。<br>按地圖左上的 <b>✏️</b> 開始畫，再按一次停止。<br><b>照片／截圖轉路線：</b>① 上傳圖片 → ② 按「兩點對齊」 → ③ 鎖定 → ④ 開 ✏️ 沿著線在每個轉角點一下 → ⑤ 匯出 GPX。</div>
+    <section class="pane" id="pane-hot">
+      <div class="hint">點卡片直接載入路線，再到「🏃 導航」開跑。</div>
+      <details class="box" open><summary>🏆 實跑過的路線</summary>
+        <div class="row" style="margin-bottom:8px"><button class="btn" id="hotsort">📍 依離我的距離排序</button></div>
+        <div id="hotlist"></div>
+      </details>
+      <details class="box"><summary>🤖 全大台北最像的位置（演算法推薦）</summary>
+        <div class="hint">每個內建圖案在雙北掃過 132 個地點、取最像的前 3 名（約 10 km）。點卡片載入第 1 名，或點 #2、#3。</div>
+        <div id="reclist"></div>
+      </details>
+      <details class="box"><summary>📂 匯入 GPX 檔</summary>
+        <input type="file" id="gpxfile" accept=".gpx,application/gpx+xml" style="margin-top:8px">
+      </details>
+    </section>
+
+    <section class="pane on" id="pane-tpl">
+      <label style="margin-top:0">① 選圖案</label>
+      <select id="tplsel"></select>
+      <div id="padbox" style="display:none">
+        <canvas id="pad" width="300" height="300" style="width:100%;max-width:300px;aspect-ratio:1;border:1px solid var(--line);border-radius:8px;touch-action:none;background:#fff;margin-top:8px"></canvas>
+        <div class="row"><button class="btn pri" id="padpen">✏️ 畫筆</button><button class="btn" id="paderase">🧽 橡皮擦</button><button class="btn" id="padundo">↶ 復原</button><button class="btn" id="padclear">清除</button></div>
+        <details class="help"><summary>畫板怎麼用？</summary>一筆一筆畫：先畫外框（橘色），再畫眼睛、嘴巴、腳等細節（藍色）。頭尾接近的筆畫會自動接成一圈；畫錯可以用橡皮擦擦掉一部分，或按復原。細節要畫大一點（約佔整張圖 1/6 以上），太小的會被街道吃掉。</details>
+      </div>
+      <label>② 點地圖（或按 ◎）選範圍中心</label>
+      <div class="row" style="margin-top:0"><button class="btn" id="aloc">◎ 用我的位置當中心</button></div>
+      <label>範圍半徑 <small id="v-arad">2.0 km</small></label>
+      <input type="range" id="arad" min="0.8" max="2" step="0.1" value="2">
+      <label style="margin:6px 0 0;font-size:13px"><input type="checkbox" id="anydist" checked> 不管距離，只求最像（圖案大小也自動找）</label>
+      <div id="distbox" style="display:none">
+        <label>想跑的距離 <small id="v-adist">10 km</small></label>
+        <input type="range" id="adist" min="3" max="20" step="1" value="10">
+      </div>
+      <div class="row"><button class="btn pri big" id="auto">✨ ③ 自動生成</button></div>
+      <div id="autores"></div>
+      <details class="box"><summary>🎯 手動放置（自己決定位置、大小、角度）</summary>
+        <div class="hint">點地圖放置中心 → 調整大小與角度 → 生成路線。虛線是目標圖案，橘線是實際可跑的路線。多筆畫的圖案只能用上面的自動生成。</div>
+        <label>寬度 <small id="v-tsz">2000 m</small></label>
+        <input type="range" id="tsz" min="500" max="6000" step="100" value="2000">
+        <label>旋轉 <small id="v-trot">0°</small></label>
+        <input type="range" id="trot" min="-180" max="180" value="0">
+        <div class="row"><button class="btn pri" id="tplgo" disabled>沿街道生成路線</button></div>
+        <div class="row"><button class="btn blue" id="tplfind">🔍 在目前畫面裡找最像的位置</button></div>
+        <div id="tplres"></div>
+      </details>
+      <details class="box"><summary>⚙️ 路線設定</summary>
+        <label style="margin:8px 0 4px;font-size:13px"><input type="checkbox" id="avoid"> 🚦 避開大馬路與紅綠燈（優先走巷弄、公園）</label>
+        <div class="sub" id="sigs" style="margin-bottom:0"></div>
+      </details>
+    </section>
+
+    <section class="pane" id="pane-draw">
+      <div class="seg"><button data-tab="draw" class="on">描圖／點路線</button><button data-tab="pix">像素方格</button></div>
+      <div class="hint">在地圖上依序點擊控制點，系統會用步行路網自動貼合街道。按地圖左上的 <b>✏️</b> 開始畫，再按一次停止。</div>
+      <details class="help"><summary>照片／截圖轉路線怎麼做？</summary>① 上傳圖片 → ② 按「兩點對齊」 → ③ 鎖定 → ④ 開 ✏️ 沿著線在每個轉角點一下 → ⑤ 匯出 GPX。</details>
       <label>描圖紙圖片 (PNG / JPG / SVG)</label>
       <input type="file" id="imgfile" accept="image/*">
       <label>透明度 <small id="v-op">50%</small></label>
@@ -113,38 +177,9 @@
       </div>
     </section>
 
-    <section class="pane" id="pane-tpl">
-      <div class="hint">選一個圖案 → 點地圖放置中心 → 調整大小與角度 → 生成路線。虛線是目標圖案，橘線是實際可跑的路線。</div>
-      <label>圖案範本</label>
-      <select id="tplsel"></select>
-      <div id="padbox" style="display:none">
-        <canvas id="pad" width="300" height="300" style="width:100%;max-width:300px;aspect-ratio:1;border:1px solid var(--line);border-radius:8px;touch-action:none;background:#fff;margin-top:8px"></canvas>
-        <div class="row"><button class="btn pri" id="padpen">✏️ 畫筆</button><button class="btn" id="paderase">🧽 橡皮擦</button><button class="btn" id="padundo">↶ 復原</button><button class="btn" id="padclear">清除</button></div>
-        <div class="hint">一筆一筆畫：先畫外框（橘色），再畫眼睛、嘴巴、腳等細節（藍色）。頭尾接近的筆畫會自動接成一圈；畫錯可以用橡皮擦擦掉一部分，或按復原。細節要畫大一點（約佔整張圖 1/6 以上），太小的會被街道吃掉。畫好後用下面的「✨ 自動生成」。</div>
-      </div>
-      <label>寬度 <small id="v-tsz">2000 m</small></label>
-      <input type="range" id="tsz" min="500" max="6000" step="100" value="2000">
-      <label>旋轉 <small id="v-trot">0°</small></label>
-      <input type="range" id="trot" min="-180" max="180" value="0">
-      <div class="row"><button class="btn pri" id="tplgo" disabled>沿街道生成路線</button></div>
-      <div class="row"><button class="btn blue" id="tplfind">🔍 在目前畫面裡找最像的位置</button></div>
-      <div id="tplres"></div>
-      <label style="margin-top:14px">✨ 指定範圍自動生成</label>
-      <div class="hint">點地圖（或按 ◎）設定範圍中心，選好圖案，程式會在藍色圓圈內找出最像的路線。</div>
-      <div class="row"><button class="btn" id="aloc">◎ 用我的位置當中心</button></div>
-      <label>範圍半徑 <small id="v-arad">2.0 km</small></label>
-      <input type="range" id="arad" min="0.8" max="2" step="0.1" value="2">
-      <label style="margin:6px 0 0;font-size:13px"><input type="checkbox" id="anydist" checked> 不管距離，只求最像（圖案大小也自動找）</label>
-      <div id="distbox" style="display:none">
-        <label>想跑的距離 <small id="v-adist">10 km</small></label>
-        <input type="range" id="adist" min="3" max="20" step="1" value="10">
-      </div>
-      <div class="row"><button class="btn pri" id="auto">✨ 自動生成</button></div>
-      <div id="autores"></div>
-    </section>
-
     <section class="pane" id="pane-pix">
-      <div class="hint">在 8×8 格子上畫圖，系統取最大的外輪廓，依街區長度展開成方格路線。適合民生社區、三重等棋盤街道。點地圖設定圖案「左上角」。</div>
+      <div class="seg"><button data-tab="draw">描圖／點路線</button><button data-tab="pix" class="on">像素方格</button></div>
+      <div class="hint">在 8×8 格子上畫圖，依街區長度展開成方格路線，適合民生社區、三重等棋盤街道。點地圖設定圖案「左上角」。</div>
       <div id="grid"></div>
       <div class="row">
         <button class="btn" data-preset="heart">愛心</button>
@@ -158,43 +193,34 @@
       <div class="row"><button class="btn pri" id="pixgo" disabled>沿街道生成路線</button></div>
     </section>
 
-    <section class="pane" id="pane-hot">
-      <div class="hint">雙北實跑過的 GPS Art 路線，點卡片直接載入，再到「導航」分頁開跑。</div>
-      <div class="row" style="margin-bottom:8px"><button class="btn" id="hotsort">📍 依離我的距離排序</button></div>
-      <div id="hotlist"></div>
-      <label>🤖 全大台北最像的位置（演算法推薦）</label>
-      <div class="hint">每個內建圖案在雙北掃過 132 個地點、取最像的前 3 名（約 10 km）。點卡片載入第 1 名，或點下面的 #2、#3。</div>
-      <div id="reclist"></div>
-      <label>匯入 GPX 檔</label>
-      <input type="file" id="gpxfile" accept=".gpx,application/gpx+xml">
-    </section>
-
     <section class="pane" id="pane-nav">
-      <div class="hint">手機開啟後按「開始導航」，會持續定位並在轉彎前約 100 公尺預告、35 公尺時嗶聲＋語音提示路名。導航時請保持瀏覽器在前景（已啟用螢幕常亮）。</div>
-      <div class="row">
-        <button class="btn blue" id="navgo">▶ 開始導航</button>
-        <button class="btn" id="simgo">🧪 模擬試跑</button>
-      </div>
-      <label style="margin:8px 0 0"><input type="checkbox" id="smart" checked> 🧠 智慧重排：繞路、反方向或跳到別段時，依你的位置和方向重新規劃還沒跑的部分</label>
-      <label>模擬速度 <small id="v-spd">8×</small></label>
-      <input type="range" id="spd" min="1" max="30" value="8">
-      <div class="row"><button class="btn" id="navstop" disabled>■ 停止</button></div>
-      <div class="hint">開始後面板會自動收起，按右下 ☰ 可再打開。地圖左上：📍 換起點、⇄ 反向、🧭 前方朝上。跑步中可拖曳、縮放、雙指旋轉地圖看前面的路，按 ◎（或 15 秒沒動）就回到目前位置。電腦上用 Shift＋滾輪旋轉。跑錯或抄捷徑時，回到路線上會自動接回。</div>
-      <div class="row">
-        <button class="btn blue" id="fromme">📍 從我的位置找最近起點</button>
+      <div class="row" style="margin-top:0">
+        <button class="btn blue big" id="navgo">▶ 開始導航</button>
+        <button class="btn" id="navstop" disabled style="flex:none">■ 停止</button>
       </div>
       <div class="row">
-        <button class="btn" id="gmap">🗺️ Google 地圖導航到起點</button>
-        <button class="btn" id="trackgpx" disabled>⬇ 匯出實際軌跡</button>
+        <button class="btn" id="fromme">📍 從我的位置找最近起點</button>
+        <button class="btn" id="gmap">🗺️ Google 地圖到起點</button>
       </div>
-      <label>⚡ 最少重複跑法</label>
-      <div class="hint" style="margin-top:0">保留圖案的每一段線，重新排出重複路段最少的一筆畫順序。</div>
-      <label style="margin:4px 0"><input type="checkbox" id="mustret" checked> 要回到起點（取消勾選可在別處結束，通常更短）</label>
-      <div class="row">
-        <button class="btn pri" id="optgo">⚡ 計算最佳跑法</button>
-        <button class="btn" id="optundo" disabled>↶ 還原原路線</button>
-      </div>
-      <div class="hint" id="turnlist" style="max-height:200px;overflow:auto"></div>
+      <label style="margin:8px 0 0;font-size:13px"><input type="checkbox" id="smart" checked> 🧠 智慧重排：繞路、反方向或跳到別段時，自動重新規劃還沒跑的部分</label>
+      <div class="row"><button class="btn" id="trackgpx" disabled>⬇ 匯出實際軌跡</button></div>
+      <details class="help"><summary>跑步中怎麼操作？切換 App 會斷嗎？</summary>轉彎前約 100 公尺預告、35 公尺時嗶聲＋語音提示路名。開始後面板會自動收起，按右下 ☰ 可再打開。地圖左上：📍 換起點、⇄ 反向、🧭 前方朝上。可拖曳、縮放、雙指旋轉地圖看前面的路，按 ◎（或 15 秒沒動）就回到目前位置。跑錯或抄捷徑時，回到路線上會自動接回。<br><b>網頁放到背景時，手機會暫停定位</b>：盡量讓這個頁面留在前景（已啟用螢幕常亮）。切回來時會自動重新定位；就算分頁被系統關掉，重新打開也能「接著跑」。想要完整軌跡，建議同時用 Strava 或手錶記錄。</details>
+      <details class="box"><summary>⚡ 最少重複跑法</summary>
+        <div class="hint">保留圖案的每一段線，重新排出重複路段最少的一筆畫順序。</div>
+        <label style="margin:4px 0;font-size:13px"><input type="checkbox" id="mustret" checked> 要回到起點（取消勾選可在別處結束，通常更短）</label>
+        <div class="row">
+          <button class="btn pri" id="optgo">⚡ 計算最佳跑法</button>
+          <button class="btn" id="optundo" disabled>↶ 還原原路線</button>
+        </div>
+      </details>
+      <details class="box"><summary>🧪 模擬試跑</summary>
+        <label>模擬速度 <small id="v-spd">8×</small></label>
+        <input type="range" id="spd" min="1" max="30" value="8">
+        <div class="row"><button class="btn" id="simgo">🧪 開始模擬</button></div>
+      </details>
+      <details class="box"><summary>📋 轉彎清單</summary>
+        <div class="hint" id="turnlist" style="max-height:240px;overflow:auto"></div>
+      </details>
     </section>
 
     <div id="status"></div>
@@ -536,10 +562,12 @@ $('gpx').onclick = () => {
 };
 
 // ===== 分頁 & 地圖點擊 =====
-let tab = 'draw';
-document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+let tab = 'tpl';
+// 「手繪」分頁裡再分描圖、像素兩種，所以上方分頁按鈕用 draw 代表兩者
+document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => {
   tab = b.dataset.tab;
-  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  const main = tab === 'pix' ? 'draw' : tab;
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === main));
   document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'pane-' + tab));
   previewLine.setLatLngs([]); areaCircle.remove(); autoLayer.clearLayers();
   if (tab === 'tpl') drawTpl(); if (tab === 'pix') drawPix(); if (tab === 'nav') buildNav();
@@ -872,17 +900,25 @@ const TEMPLATES = {
   '🐙 章魚': { s: [[[[0.05,-0.37],[-0.03,-0.6],[-0.11,-0.71],[-0.24,-0.8],[-0.23,-0.87],[-0.29,-0.9],[-0.4,-0.83],[-0.49,-0.82],[-0.52,-0.78],[-0.48,-0.72],[-0.52,-0.57],[-0.49,-0.33],[-0.31,-0.02],[-0.43,0.07],[-0.69,-0.03],[-0.83,-0.17],[-0.87,-0.26],[-0.85,-0.46],[-0.87,-0.51],[-0.95,-0.5],[-1.0,-0.35],[-0.99,-0.22],[-0.86,-0.01],[-0.65,0.13],[-0.44,0.2],[-0.47,0.48],[-0.38,0.71],[-0.22,0.85],[-0.02,0.9],[0.2,0.86],[0.36,0.73],[0.47,0.5],[0.44,0.2],[0.65,0.13],[0.86,-0.01],[0.99,-0.22],[1.0,-0.35],[0.95,-0.5],[0.87,-0.51],[0.85,-0.46],[0.87,-0.26],[0.83,-0.17],[0.69,-0.03],[0.43,0.07],[0.31,-0.02],[0.49,-0.33],[0.52,-0.58],[0.49,-0.71],[0.42,-0.81],[0.29,-0.9],[0.23,-0.88],[0.22,-0.82],[0.38,-0.65],[0.4,-0.47],[0.33,-0.27],[0.2,-0.06],[0.04,-0.09],[0.06,-0.13]],true],[[[-0.08,0.43],[-0.1,0.36],[-0.17,0.34],[-0.24,0.36],[-0.26,0.43],[-0.24,0.5],[-0.17,0.52],[-0.1,0.5]],true],[[[0.26,0.43],[0.24,0.36],[0.17,0.34],[0.1,0.36],[0.08,0.43],[0.1,0.5],[0.17,0.52],[0.24,0.5]],true]] },
   // emoji 風格（輪廓圓、特徵明顯，比較好畫）
   '🧋 珍珠奶茶': { s: [[[[0.38,-1.0],[-0.38,-1.0],[-0.5,0.39],[-0.55,0.39],[-0.55,0.51],[0.06,0.51],[0.26,0.96],[0.31,1.0],[0.37,0.97],[0.38,0.92],[0.21,0.51],[0.55,0.51],[0.55,0.39],[0.5,0.39]],true],[[[-0.04,-0.75],[-0.08,-0.84],[-0.17,-0.88],[-0.26,-0.84],[-0.3,-0.75],[-0.26,-0.66],[-0.17,-0.62],[-0.08,-0.66]],true],[[[0.28,-0.77],[0.24,-0.86],[0.15,-0.9],[0.06,-0.86],[0.02,-0.77],[0.06,-0.68],[0.15,-0.64],[0.24,-0.68]],true],[[[0.11,-0.48],[0.07,-0.57],[-0.02,-0.6],[-0.11,-0.57],[-0.15,-0.48],[-0.11,-0.38],[-0.02,-0.35],[0.07,-0.38]],true]] },
+  '🧋 珍珠奶茶（多珍珠）': { s: [[[[0.38,-1.0],[-0.38,-1.0],[-0.5,0.39],[-0.55,0.39],[-0.55,0.51],[0.06,0.51],[0.26,0.96],[0.31,1.0],[0.37,0.97],[0.38,0.92],[0.21,0.51],[0.55,0.51],[0.55,0.39],[0.5,0.39]],true],[[[-0.1,-0.8],[-0.13,-0.87],[-0.2,-0.9],[-0.27,-0.87],[-0.3,-0.8],[-0.27,-0.73],[-0.2,-0.7],[-0.13,-0.73]],true],[[[0.14,-0.83],[0.11,-0.9],[0.04,-0.93],[-0.03,-0.9],[-0.06,-0.83],[-0.03,-0.76],[0.04,-0.73],[0.11,-0.76]],true],[[[0.36,-0.77],[0.33,-0.84],[0.26,-0.87],[0.19,-0.84],[0.16,-0.77],[0.19,-0.7],[0.26,-0.67],[0.33,-0.7]],true],[[[-0.15,-0.52],[-0.18,-0.59],[-0.25,-0.62],[-0.32,-0.59],[-0.35,-0.52],[-0.32,-0.45],[-0.25,-0.43],[-0.18,-0.45]],true],[[[0.09,-0.55],[0.06,-0.62],[-0.01,-0.65],[-0.08,-0.62],[-0.11,-0.55],[-0.08,-0.48],[-0.01,-0.46],[0.06,-0.48]],true],[[[0.33,-0.5],[0.3,-0.57],[0.23,-0.59],[0.16,-0.57],[0.13,-0.5],[0.16,-0.43],[0.23,-0.4],[0.3,-0.43]],true]] },
   '🍄 蘑菇': { s: [[[[0.35,-0.92],[-0.35,-0.92],[-0.29,-0.18],[-1.0,-0.18],[-0.97,0.16],[-0.86,0.44],[-0.63,0.69],[-0.38,0.84],[-0.2,0.9],[0.0,0.92],[0.2,0.9],[0.38,0.84],[0.56,0.75],[0.71,0.63],[0.83,0.48],[0.92,0.3],[0.99,0.07],[1.0,-0.18],[0.29,-0.18]],true],[[[-0.28,0.34],[-0.32,0.25],[-0.42,0.21],[-0.52,0.25],[-0.56,0.34],[-0.52,0.44],[-0.42,0.48],[-0.32,0.44]],true],[[[0.4,0.55],[0.36,0.46],[0.26,0.42],[0.17,0.46],[0.13,0.55],[0.17,0.65],[0.26,0.69],[0.36,0.65]],true]] },
+  '🍄 蘑菇（多斑點）': { s: [[[[0.35,-0.92],[-0.35,-0.92],[-0.29,-0.18],[-1.0,-0.18],[-0.97,0.16],[-0.86,0.44],[-0.63,0.69],[-0.38,0.84],[-0.2,0.9],[0.0,0.92],[0.2,0.9],[0.38,0.84],[0.56,0.75],[0.71,0.63],[0.83,0.48],[0.92,0.3],[0.99,0.07],[1.0,-0.18],[0.29,-0.18]],true],[[[-0.46,0.18],[-0.5,0.1],[-0.58,0.07],[-0.66,0.1],[-0.69,0.18],[-0.66,0.27],[-0.58,0.3],[-0.5,0.27]],true],[[[-0.09,0.55],[-0.13,0.47],[-0.21,0.44],[-0.29,0.47],[-0.33,0.55],[-0.29,0.63],[-0.21,0.67],[-0.13,0.63]],true],[[[0.33,0.24],[0.29,0.15],[0.21,0.12],[0.13,0.15],[0.09,0.24],[0.13,0.32],[0.21,0.35],[0.29,0.32]],true],[[[0.69,0.39],[0.66,0.31],[0.58,0.28],[0.5,0.31],[0.46,0.39],[0.5,0.48],[0.58,0.51],[0.66,0.48]],true],[[[-0.04,0.13],[-0.08,0.05],[-0.16,0.02],[-0.24,0.05],[-0.27,0.13],[-0.24,0.21],[-0.16,0.25],[-0.08,0.21]],true]] },
   '🐷 豬': { s: [[[[0.92,-0.12],[0.89,-0.34],[0.79,-0.55],[0.65,-0.73],[0.44,-0.89],[0.22,-0.97],[0.0,-1.0],[-0.22,-0.97],[-0.44,-0.89],[-0.59,-0.79],[-0.72,-0.66],[-0.82,-0.51],[-0.9,-0.3],[-0.93,-0.07],[-0.9,0.15],[-0.82,0.36],[-0.69,0.54],[-0.81,0.6],[-0.91,0.71],[-0.94,0.82],[-0.92,0.92],[-0.81,1.0],[-0.65,0.98],[-0.51,0.89],[-0.41,0.75],[-0.22,0.82],[0.0,0.85],[0.22,0.82],[0.41,0.75],[0.48,0.87],[0.6,0.96],[0.75,1.0],[0.86,0.98],[0.94,0.89],[0.93,0.76],[0.84,0.62],[0.69,0.54],[0.79,0.4],[0.87,0.24],[0.91,0.06]],true],[[[0.37,-0.31],[0.34,-0.4],[0.26,-0.49],[0.14,-0.54],[0.0,-0.56],[-0.14,-0.54],[-0.26,-0.49],[-0.34,-0.4],[-0.37,-0.31],[-0.34,-0.21],[-0.26,-0.13],[-0.14,-0.07],[0.0,-0.05],[0.14,-0.07],[0.26,-0.13],[0.34,-0.21]],true],[[[-0.27,0.21],[-0.3,0.13],[-0.38,0.1],[-0.46,0.13],[-0.5,0.21],[-0.46,0.3],[-0.38,0.33],[-0.3,0.3]],true],[[[0.5,0.21],[0.46,0.13],[0.38,0.1],[0.3,0.13],[0.27,0.21],[0.3,0.3],[0.38,0.33],[0.46,0.3]],true]] },
   '🐤 小雞': { s: [[[[0.54,-0.32],[0.51,-0.45],[0.45,-0.55],[0.36,-0.66],[0.23,-0.74],[-0.04,-0.81],[-0.33,-0.78],[-0.52,-0.69],[-0.67,-0.55],[-0.74,-0.4],[-0.76,-0.25],[-1.0,0.15],[-0.69,-0.03],[-0.59,0.1],[-0.44,0.2],[-0.26,0.26],[-0.06,0.28],[-0.08,0.4],[-0.07,0.53],[-0.02,0.64],[0.08,0.74],[0.24,0.81],[0.43,0.8],[0.61,0.68],[0.68,0.59],[0.71,0.48],[1.0,0.39],[0.7,0.3],[0.6,0.13],[0.44,0.03],[0.53,-0.14]],true],[[[0.48,0.52],[0.45,0.45],[0.38,0.42],[0.3,0.45],[0.27,0.52],[0.3,0.6],[0.38,0.63],[0.45,0.6]],true],[[[-0.47,-0.11],[-0.16,-0.48],[0.16,-0.16]],false]] },
   '🎈 氣球': { s: [[[[0.1,-0.33],[-0.1,-0.33],[-0.07,-0.29],[-0.21,-0.25],[-0.33,-0.17],[-0.47,0.02],[-0.54,0.25],[-0.53,0.51],[-0.44,0.74],[-0.26,0.92],[-0.05,1.0],[0.16,0.97],[0.35,0.85],[0.47,0.68],[0.54,0.45],[0.54,0.22],[0.46,-0.01],[0.28,-0.21],[0.07,-0.29]],true],[[[0.0,-0.33],[0.12,-0.5],[-0.08,-0.7],[0.1,-0.88],[-0.02,-1.0]],false]] },
   '📍 台灣': [[0.27,1.0],[0.47,0.89],[0.52,0.83],[0.43,0.59],[0.45,0.58],[0.06,-0.5],[-0.08,-0.74],[-0.1,-1.0],[-0.17,-0.98],[-0.25,-0.72],[-0.42,-0.59],[-0.52,-0.35],[-0.48,-0.09],[-0.39,0.26],[-0.08,0.73],[0.03,0.85],[0.19,0.93]],
 };
 let tplCenter = null, tplSize = 2000, tplRot = 0;
-Object.keys(TEMPLATES).forEach(k => $('tplsel').add(new Option(k, k)));
-$('tplsel').add(new Option('✏️ 自己畫（畫板，可畫多筆）', 'pad'));
+// 選單分組：依 TEMPLATES 的順序，遇到每組第一個圖案就開新的一組
+const TPL_GROUPS = { '❤️ 愛心': '簡單圖形', '🐕 臘腸狗': '動物與頭像', '🐈 坐著的貓': '整隻動物', '🧋 珍珠奶茶': 'emoji 風格' };
+{ let g = null;
+  Object.keys(TEMPLATES).forEach(k => {
+    if (TPL_GROUPS[k]) { g = document.createElement('optgroup'); g.label = TPL_GROUPS[k]; $('tplsel').append(g); }
+    g.append(new Option(k, k));
+  });
+  g = document.createElement('optgroup'); g.label = '自己畫'; g.append(new Option('✏️ 自己畫（畫板，可畫多筆）', 'pad')); $('tplsel').append(g); }
 // 臉、動物、房子等要保持正立，自動生成只轉 ±15°；其他圖案可以轉 ±45°
-const UPRIGHT = new Set(['🐕 臘腸狗', '🏠 房子', '👻 小鬼', '🐱 貓咪', '😊 笑臉', '🐻 熊', '🐰 兔子', '🍎 蘋果', '🎄 聖誕樹', '⚡ 閃電', '🐈 坐著的貓', '🐇 兔子全身', '🦆 小鴨', '🐘 大象', '🐋 鯨魚', '🐌 蝸牛', '🐢 烏龜', '🐧 企鵝', '🦌 鹿', '🐙 章魚', '🧋 珍珠奶茶', '🍄 蘑菇', '🐷 豬', '🐤 小雞', '🎈 氣球', '📍 台灣', 'pad']);
+const UPRIGHT = new Set(['🐕 臘腸狗', '🏠 房子', '👻 小鬼', '🐱 貓咪', '😊 笑臉', '🐻 熊', '🐰 兔子', '🍎 蘋果', '🎄 聖誕樹', '⚡ 閃電', '🐈 坐著的貓', '🐇 兔子全身', '🦆 小鴨', '🐘 大象', '🐋 鯨魚', '🐌 蝸牛', '🐢 烏龜', '🐧 企鵝', '🦌 鹿', '🐙 章魚', '🧋 珍珠奶茶', '🍄 蘑菇', '🧋 珍珠奶茶（多珍珠）', '🍄 蘑菇（多斑點）', '🐷 豬', '🐤 小雞', '🎈 氣球', '📍 台灣', 'pad']);
 const multiTpl = () => $('tplsel').value === 'pad' || !Array.isArray(TEMPLATES[$('tplsel').value]); // 多筆畫只能用自動生成
 
 // ===== 手繪畫板：一筆一筆畫，外框＋眼睛、嘴巴等細節 =====
@@ -1801,7 +1837,9 @@ function markRun(ll) {
     if (mv && Math.abs(q.dir[0] * mv[0] + q.dir[1] * mv[1]) < 0.6) continue;
     q.done = changed = true;
   }
-  if (!changed) return;
+  if (changed) drawDone();
+}
+function drawDone() {
   const runs = []; let cur = null;
   for (const q of nav.base) if (q.done) { if (!cur) runs.push(cur = []); cur.push(q.ll); } else cur = null;
   doneLine.setLatLngs(runs).addTo(map);
@@ -1994,14 +2032,54 @@ async function startNav(sim) {
     }, 200);
   } else {
     if (!navigator.geolocation) return setStatus('此瀏覽器不支援定位');
-    nav.watch = navigator.geolocation.watchPosition(pos => onFix(L.latLng(pos.coords.latitude, pos.coords.longitude)), e => setStatus('定位失敗：' + e.message + '（需 HTTPS 並允許定位權限）'), { enableHighAccuracy: true, maximumAge: 1000 });
+    watchGPS();
   }
 }
+// ===== 切到別的 App、鎖螢幕時，手機會暫停網頁的定位，甚至把分頁關掉重開 =====
+// 1. 回到前景就重新啟動定位  2. 每 5 秒把進度存在手機裡（localStorage），分頁被重開也能接著跑
+const SAVE_KEY = 'gpsart-nav';
+function watchGPS() {
+  if (nav.watch !== null) navigator.geolocation.clearWatch(nav.watch);
+  nav.watch = navigator.geolocation.watchPosition(pos => { onFix(L.latLng(pos.coords.latitude, pos.coords.longitude)); saveNav(); },
+    e => setStatus('定位失敗：' + e.message + '（需 HTTPS 並允許定位權限）'), { enableHighAccuracy: true, maximumAge: 1000 });
+}
+function saveNav(force) {
+  if (!nav.on || nav.sim || (!force && Date.now() - (nav.savedAt || 0) < 5000)) return;
+  nav.savedAt = Date.now();
+  const r6 = p => [+p[0].toFixed(6), +p[1].toFixed(6)];
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({ t: Date.now(), orig: nav.orig.map(r6), cur: nav.replanned ? fullCoords().map(r6) : null,
+      progress: nav.progress, done: nav.base.map(q => q.done ? 1 : 0).join(''), track: trackLine.getLatLngs().map(p => r6([p.lat, p.lng])) }));
+  } catch (e) {}
+}
+function loadSaved() {
+  try { const v = JSON.parse(localStorage.getItem(SAVE_KEY)); return v && Date.now() - v.t < 6 * 3600e3 ? v : null; } catch (e) { return null; }
+}
+function dropSaved() { try { localStorage.removeItem(SAVE_KEY); } catch (e) {} $('resumebox').style.display = 'none'; }
+{ const v = loadSaved();
+  if (v) { $('resumebox').style.display = ''; $('resumeinfo').textContent = `（${Math.round((Date.now() - v.t) / 60000)} 分鐘前，全長 ${lenKm(v.orig).toFixed(1)} km）`; } }
+$('resumeno').onclick = dropSaved;
+$('resume').onclick = async () => {
+  const v = loadSaved(); if (!v) return dropSaved();
+  $('resumebox').style.display = 'none';
+  loadCoords(v.orig); document.querySelector('.tabs [data-tab="nav"]').click();
+  await startNav(false);
+  if (v.cur) { // 上次跑到一半有重排過
+    segs = [{ coords: v.cur, dist: lenKm(v.cur) * 1000, steps: [] }]; waypoints = [L.latLng(v.cur[0]), L.latLng(v.cur.at(-1))];
+    refresh(); buildNav(); nav.replanned = true;
+  }
+  nav.progress = v.progress;
+  nav.turns.forEach(t => { if (t.at < v.progress) t.said = t.pre = true; });
+  [...v.done].forEach((c, i) => { if (c === '1' && nav.base[i]) nav.base[i].done = true; });
+  drawDone(); trackLine.setLatLngs(v.track);
+  speak(`已接回上次的進度，已跑 ${(nav.ran / 1000).toFixed(1)} 公里`);
+};
 function stopNav() {
   nav.on = false;
   if (nav.replanned) { const keep = doneLine.getLatLngs(); loadCoords(nav.orig); doneLine.setLatLngs(keep); }
   clearInterval(nav.sim); nav.sim = null;
   if (nav.watch !== null) navigator.geolocation.clearWatch(nav.watch); nav.watch = null;
+  dropSaved();
   nav.lock && nav.lock.release(); nav.lock = null;
   ['navgo', 'simgo'].forEach(id => $(id).disabled = false); $('navstop').disabled = true;
   $('trackgpx').disabled = trackLine.getLatLngs().length < 2;
@@ -2009,8 +2087,14 @@ function stopNav() {
   setTimeout(() => { if (!nav.on) $('navcard').style.display = 'none'; }, 4000);
 }
 document.addEventListener('visibilitychange', async () => {
-  if (nav.on && document.visibilityState === 'visible') try { nav.lock = await navigator.wakeLock?.request('screen'); } catch (e) {}
+  if (!nav.on) return;
+  if (document.visibilityState === 'hidden') { nav.hiddenAt = Date.now(); return saveNav(true); }
+  try { nav.lock = await navigator.wakeLock?.request('screen'); } catch (e) {}
+  if (nav.watch === null) return; // 模擬試跑
+  watchGPS(); // 有些手機回到前景後舊的定位不會再更新，直接重開一個
+  if (Date.now() - (nav.hiddenAt || 0) > 10000) { speak('定位已恢復'); setStatus('剛剛在背景時定位可能中斷，已重新定位'); }
 });
+addEventListener('pagehide', () => saveNav(true));
 $('navgo').onclick = () => startNav(false);
 $('trackgpx').onclick = () => downloadGPX(trackLine.getLatLngs().map(p => [p.lat, p.lng]), 'my-run');
 $('simgo').onclick = () => startNav(true);
